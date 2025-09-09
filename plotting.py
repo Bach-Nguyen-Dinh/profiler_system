@@ -20,7 +20,7 @@ fig.suptitle('System Performance Metrics', fontsize=16, fontweight='bold')
 
 # 1. Memory Usage
 ax1 = axes[0, 0]
-ax1.plot(df['Timestamp'], df['memory_usage'], 'b-', linewidth=2, label='Memory Usage %')
+ax1.plot(df['Timestamp'].values, df['memory_usage'].values, 'b-', linewidth=2, label='Memory Usage %')
 ax1.set_title('Memory Usage Over Time')
 ax1.set_ylabel('Memory Usage (%)')
 ax1.grid(True, alpha=0.3)
@@ -31,7 +31,7 @@ plt.setp(ax1.xaxis.get_majorticklabels(), rotation=45)
 # Save memory usage subplot
 fig1 = plt.figure(figsize=(10, 6))
 ax1_solo = fig1.add_subplot(111)
-ax1_solo.plot(df['Timestamp'], df['memory_usage'], 'b-', linewidth=2, label='Memory Usage %')
+ax1_solo.plot(df['Timestamp'].values, df['memory_usage'].values, 'b-', linewidth=2, label='Memory Usage %')
 ax1_solo.set_title('Memory Usage Over Time')
 ax1_solo.set_ylabel('Memory Usage (%)')
 ax1_solo.set_xlabel('Time')
@@ -50,7 +50,7 @@ colors = plt.cm.tab10(np.linspace(0, 1, len(core_columns)))
 
 for i, core_col in enumerate(core_columns):
     core_num = core_col.split('_')[1]
-    ax2.plot(df['Timestamp'], df[core_col], color=colors[i], 
+    ax2.plot(df['Timestamp'].values, df[core_col].values, color=colors[i], 
              linewidth=1.5, label=f'Core {core_num}', alpha=0.8)
 
 ax2.set_title('CPU Cores Usage Over Time')
@@ -65,7 +65,7 @@ fig2 = plt.figure(figsize=(12, 6))
 ax2_solo = fig2.add_subplot(111)
 for i, core_col in enumerate(core_columns):
     core_num = core_col.split('_')[1]
-    ax2_solo.plot(df['Timestamp'], df[core_col], color=colors[i], 
+    ax2_solo.plot(df['Timestamp'].values, df[core_col].values, color=colors[i], 
                   linewidth=1.5, label=f'Core {core_num}', alpha=0.8)
 ax2_solo.set_title('CPU Cores Usage Over Time')
 ax2_solo.set_ylabel('CPU Usage (%)')
@@ -84,7 +84,7 @@ freq_columns = [col for col in df.columns if col.startswith('core_') and col.end
 
 for i, freq_col in enumerate(freq_columns):
     core_num = freq_col.split('_')[1]
-    ax3.plot(df['Timestamp'], df[freq_col], color=colors[i], 
+    ax3.plot(df['Timestamp'].values, df[freq_col].values, color=colors[i], 
              linewidth=1.5, label=f'Core {core_num}', alpha=0.8)
 
 ax3.set_title('CPU Cores Frequency Over Time')
@@ -99,7 +99,7 @@ fig3 = plt.figure(figsize=(12, 6))
 ax3_solo = fig3.add_subplot(111)
 for i, freq_col in enumerate(freq_columns):
     core_num = freq_col.split('_')[1]
-    ax3_solo.plot(df['Timestamp'], df[freq_col], color=colors[i], 
+    ax3_solo.plot(df['Timestamp'].values, df[freq_col].values, color=colors[i], 
                   linewidth=1.5, label=f'Core {core_num}', alpha=0.8)
 ax3_solo.set_title('CPU Cores Frequency Over Time')
 ax3_solo.set_ylabel('Frequency (MHz)')
@@ -114,7 +114,7 @@ plt.close(fig3)
 
 # 4. CPU Power
 ax4 = axes[1, 0]
-ax4.plot(df['Timestamp'], df['cpu_power'], 'r-', linewidth=2, label='CPU Power')
+ax4.plot(df['Timestamp'].values, df['cpu_power'].values, 'r-', linewidth=2, label='CPU Power')
 ax4.set_title('CPU Power Consumption Over Time')
 ax4.set_ylabel('Power (Watts)')
 ax4.set_xlabel('Time')
@@ -126,7 +126,7 @@ plt.setp(ax4.xaxis.get_majorticklabels(), rotation=45)
 # Save CPU power subplot
 fig4 = plt.figure(figsize=(10, 6))
 ax4_solo = fig4.add_subplot(111)
-ax4_solo.plot(df['Timestamp'], df['cpu_power'], 'r-', linewidth=2, label='CPU Power')
+ax4_solo.plot(df['Timestamp'].values, df['cpu_power'].values, 'r-', linewidth=2, label='CPU Power')
 ax4_solo.set_title('CPU Power Consumption Over Time')
 ax4_solo.set_ylabel('Power (Watts)')
 ax4_solo.set_xlabel('Time')
@@ -140,7 +140,7 @@ plt.close(fig4)
 
 # 5. CPU Temperature
 ax5 = axes[1, 1]
-ax5.plot(df['Timestamp'], df['cpu_temperature'], 'orange', linewidth=2, label='CPU Temperature')
+ax5.plot(df['Timestamp'].values, df['cpu_temperature'].values, 'orange', linewidth=2, label='CPU Temperature')
 ax5.set_title('CPU Temperature Over Time')
 ax5.set_ylabel('Temperature (°C)')
 ax5.set_xlabel('Time')
@@ -152,7 +152,7 @@ plt.setp(ax5.xaxis.get_majorticklabels(), rotation=45)
 # Save CPU temperature subplot
 fig5 = plt.figure(figsize=(10, 6))
 ax5_solo = fig5.add_subplot(111)
-ax5_solo.plot(df['Timestamp'], df['cpu_temperature'], 'orange', linewidth=2, label='CPU Temperature')
+ax5_solo.plot(df['Timestamp'].values, df['cpu_temperature'].values, 'orange', linewidth=2, label='CPU Temperature')
 ax5_solo.set_title('CPU Temperature Over Time')
 ax5_solo.set_ylabel('Temperature (°C)')
 ax5_solo.set_xlabel('Time')
@@ -166,7 +166,7 @@ plt.close(fig5)
 
 # 6. Overall CPU Usage
 ax6 = axes[1, 2]
-ax6.plot(df['Timestamp'], df['cpu_usage'], 'g-', linewidth=2, label='Overall CPU Usage')
+ax6.plot(df['Timestamp'].values, df['cpu_usage'].values, 'g-', linewidth=2, label='Overall CPU Usage')
 ax6.set_title('Overall CPU Usage Over Time')
 ax6.set_ylabel('CPU Usage (%)')
 ax6.set_xlabel('Time')
@@ -178,7 +178,7 @@ plt.setp(ax6.xaxis.get_majorticklabels(), rotation=45)
 # Save overall CPU usage subplot
 fig6 = plt.figure(figsize=(10, 6))
 ax6_solo = fig6.add_subplot(111)
-ax6_solo.plot(df['Timestamp'], df['cpu_usage'], 'g-', linewidth=2, label='Overall CPU Usage')
+ax6_solo.plot(df['Timestamp'].values, df['cpu_usage'].values, 'g-', linewidth=2, label='Overall CPU Usage')
 ax6_solo.set_title('Overall CPU Usage Over Time')
 ax6_solo.set_ylabel('CPU Usage (%)')
 ax6_solo.set_xlabel('Time')
