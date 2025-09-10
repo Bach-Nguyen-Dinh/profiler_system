@@ -96,7 +96,7 @@ def analyse_dependencies(pathDir, fileType='py'):
             node_colors = ['orange' if node == 'main.txt' else 'blue' for node in g.nodes()]
             nx.draw_circular(g, with_labels=True, node_color=node_colors)
             plt.draw()
-            plt.show()
+            plt.savefig(pathDir+'/Call_Dependencies/'+'calls.png', dpi=300)
         else:
             print("Not a valid extension")
     else:
