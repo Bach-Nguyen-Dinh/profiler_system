@@ -4,6 +4,7 @@ import threading
 import csv
 import os
 import atexit
+import stat
 from datetime import datetime
 
 # ---------- Get System Metrics ----------
@@ -87,7 +88,16 @@ class SystemMetricsLogger:
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self._csv_file = os.path.join(output_dir, f"system_metrics_{timestamp}.csv")
-        self._metrics_interval = metrics_interval_ms / 1000  # convert ms → s
+
+        # Pre-create the file with wide permissions
+        with open(self._csv_file, "w") as f:
+            pass
+        os.chmod(self._csv_file,
+                stat.S_IRUSR | stat.S_IWUSR |
+                stat.S_IRGRP | stat.S_IWGRP |
+                stat.S_IROTH | stat.S_IWOTH)  # a+rw
+
+        self._metrics_interval = metrics_interval_ms / 1000
         self._csv_write_interval = csv_write_interval_s
         self._last_csv_write = time.time()
 
@@ -102,6 +112,7 @@ class SystemMetricsLogger:
             self._thread.join()
         self._flush_buffer_to_csv()
         print(f"Logging stopped. CSV saved to: {self._csv_file}")
+        return self._csv_file
 
     def _collect_metrics(self):
         while self._running:
@@ -134,13 +145,14 @@ class SystemMetricsLogger:
             if not self._buffer:
                 return
 
-            # Write header if file does not exist
-            file_exists = os.path.exists(self._csv_file)
+            file_empty = not os.path.exists(self._csv_file) or os.path.getsize(self._csv_file) == 0
+
             with open(self._csv_file, mode="a", newline="") as f:
                 writer = csv.DictWriter(f, fieldnames=self._buffer[0].keys())
-                if not file_exists:
+                if file_empty:
                     writer.writeheader()
                 writer.writerows(self._buffer)
+
             self._buffer.clear()
 
 
@@ -153,4 +165,4 @@ if __name__ == "__main__":
     # Simulate your workflow running for 20 seconds
     time.sleep(20)
 
-    logger.stop()
+    out_file = logger.stop()
