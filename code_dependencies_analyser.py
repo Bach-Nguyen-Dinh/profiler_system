@@ -88,12 +88,16 @@ if os.path.exists(pathDir):
         for k, v in callDepends.items():
             g.add_edges_from(([(k, t) for t in v]))
 
-        net = Network(notebook=True,directed=True)
+        net = Network(notebook=True, directed=True, cdn_resources='in_line')
         net.from_nx(g)
+        for node in net.nodes:
+            if node['id'] == 'main.txt':
+                node['color'] = 'orange'
         net.show(pathDir+'/Call_Dependencies/'+'calls.html')
 
 
-        nx.draw_circular(g,with_labels=True)
+        node_colors = ['orange' if node == 'main.txt' else 'blue' for node in g.nodes()]
+        nx.draw_circular(g, with_labels=True, node_color=node_colors)
         plt.draw()
         plt.show()
     else:
