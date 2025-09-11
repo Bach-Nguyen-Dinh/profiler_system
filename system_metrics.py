@@ -104,14 +104,14 @@ class SystemMetricsLogger:
         self._running = True
         self._thread = threading.Thread(target=self._collect_metrics, daemon=True)
         self._thread.start()
-        print(f"Logging started. CSV: {self._csv_file}")
+        print(f"\nLogging started\n")
 
     def stop(self):
         self._running = False
         if self._thread:
             self._thread.join()
         self._flush_buffer_to_csv()
-        print(f"Logging stopped. CSV saved to: {self._csv_file}")
+        print(f"\nLogging stopped. CSV saved to: {self._csv_file}")
         return self._csv_file
 
     def _collect_metrics(self):
