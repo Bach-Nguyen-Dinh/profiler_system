@@ -6,29 +6,53 @@ import os
 import atexit
 import stat
 from datetime import datetime
+import subprocess
+import re
+import glob
 
 # ---------- Get System Metrics ----------
-def read_rapl_energy():
+# def read_rapl_energy():
+#     try:
+#         with open("/sys/class/powercap/intel-rapl:0/energy_uj", "r") as f:
+#             return int(f.read().strip())  # Energy in microjoules
+#     except FileNotFoundError:
+#         return None
+
+# def get_cpu_power():
+#     energy_start = read_rapl_energy()
+#     t_start = time.time()
+#     time.sleep(0.1)
+#     energy_end = read_rapl_energy()
+#     t_end = time.time()
+
+#     if energy_start is None or energy_end is None:
+#         return None
+
+#     delta_energy_j = (energy_end - energy_start) / 1_000_000  # convert to joules
+#     delta_time_s = t_end - t_start
+#     power_watts = delta_energy_j / delta_time_s
+#     return power_watts
+
+def get_power_from_sensor(sensor_name="ina220-i2c-0-40"):
     try:
-        with open("/sys/class/powercap/intel-rapl:0/energy_uj", "r") as f:
-            return int(f.read().strip())  # Energy in microjoules
-    except FileNotFoundError:
+        # Run the sensors command
+        output = subprocess.check_output(["sensors"], text=True)
+
+        # Split into blocks (each sensor section is separated by blank lines)
+        blocks = output.strip().split("\n\n")
+
+        for block in blocks:
+            if block.startswith(sensor_name):
+                # Look for the power1 line inside the block
+                match = re.search(r"power1:\s+([\d\.]+)\s*W", block)
+                if match:
+                    return float(match.group(1))
+                else:
+                    return None  # No power line found
+        return None  # Sensor not found
+    except subprocess.CalledProcessError as e:
+        print("Error running sensors:", e)
         return None
-
-def get_cpu_power():
-    energy_start = read_rapl_energy()
-    t_start = time.time()
-    time.sleep(0.1)
-    energy_end = read_rapl_energy()
-    t_end = time.time()
-
-    if energy_start is None or energy_end is None:
-        return None
-
-    delta_energy_j = (energy_end - energy_start) / 1_000_000  # convert to joules
-    delta_time_s = t_end - t_start
-    power_watts = delta_energy_j / delta_time_s
-    return power_watts
 
 def get_system_info():
     cpu_usage = psutil.cpu_percent(interval=None)
@@ -36,23 +60,40 @@ def get_system_info():
     core_usage = {f"core_{i}_usage": usage for i, usage in enumerate(per_core_usage)}
 
     core_frequencies = {}
-    if hasattr(psutil, "cpu_freq"):
+
+    # Try reading from sysfs first (Linux only)
+    sysfs_paths = sorted(glob.glob("/sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq"))
+    if sysfs_paths:
+        for i, path in enumerate(sysfs_paths):
+            try:
+                with open(path) as f:
+                    # scaling_cur_freq is in kHz, convert to MHz
+                    core_frequencies[f"core_{i}_frequency"] = int(f.read().strip()) / 1000
+            except Exception:
+                core_frequencies[f"core_{i}_frequency"] = None
+    elif hasattr(psutil, "cpu_freq"):
+        # Fall back to psutil (may only return one object)
         freq_info = psutil.cpu_freq(percpu=True)
         if freq_info:
-            core_frequencies = {f"core_{i}_frequency": freq.current for i, freq in enumerate(freq_info)}
+            for i, freq in enumerate(freq_info):
+                core_frequencies[f"core_{i}_frequency"] = freq.current
 
-    cpu_temperature = None
-    if hasattr(psutil, "sensors_temperatures"):
-        temp_info = psutil.sensors_temperatures()
-        if 'coretemp' in temp_info:
-            cpu_temperature = temp_info['coretemp'][0].current
+    cpu_temp = None
+    temps = {}
+    sensor_data = psutil.sensors_temperatures()
+    if sensor_data:
+        for name, entries in sensor_data.items():
+            for entry in entries:
+                label = entry.label if entry.label else "unknown"
+                temps[f"{name}_{label}"] = entry.current
+    cpu_temp = max(temps.values())
 
     memory_usage = psutil.virtual_memory().percent
     total_memory = psutil.virtual_memory().total
     swap_usage = psutil.swap_memory().percent
     total_swap = psutil.swap_memory().total
 
-    cpu_power = get_cpu_power()
+    cpu_power = get_power_from_sensor("ina220-i2c-0-40")
 
     system_info = {
         "cpu_usage": cpu_usage,
@@ -62,7 +103,7 @@ def get_system_info():
         "total_swap": total_swap,
         "per_core_usage": core_usage,
         "per_core_freq": core_frequencies,
-        "cpu_temperature": cpu_temperature,
+        "cpu_temperature": cpu_temp,
         "cpu_power": cpu_power,
     }
     return system_info
