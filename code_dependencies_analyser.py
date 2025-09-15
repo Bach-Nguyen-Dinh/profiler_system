@@ -11,23 +11,21 @@ def analyse_dependencies(pathDir, fileType='py', mainFile='main.py'):
     if os.path.exists(pathDir):
         if fileType in ['py','txt','m']: 
             fileType = "*.{}".format(fileType)
-            try:
-                os.mkdir(pathDir+"/Call_Dependencies")
-            except:
-                print("Directory exists")
+            if not os.path.exists(pathDir+"/call_dependencies"):
+                os.mkdir(pathDir+"/call_dependencies")
 
             for path, subdirs, files in os.walk(pathDir):
                 for name in files:
                     if fnmatch(name, fileType):
                         try:
-                            shutil.copy(os.path.join(path, name),pathDir+"/Call_Dependencies/"+name)
+                            shutil.copy(os.path.join(path, name),pathDir+"/call_dependencies/"+name)
                             # print(os.path.join(path, name))
                             prefix = name.split(".")
-                            os.rename(pathDir+"/Call_Dependencies/"+name,pathDir+"/Call_Dependencies/"+prefix[0]+".txt")
+                            os.rename(pathDir+"/call_dependencies/"+name,pathDir+"/call_dependencies/"+prefix[0]+".txt")
                         except:
                             continue
 
-            paths = glob.glob(pathDir+"/Call_Dependencies/*.txt*")
+            paths = glob.glob(pathDir+"/call_dependencies/*.txt*")
             files = dict()
             for path in paths:
                 with open(path) as f:
@@ -93,13 +91,14 @@ def analyse_dependencies(pathDir, fileType='py', mainFile='main.py'):
             for node in net.nodes:
                 if node['id'] == mainFileNode:
                     node['color'] = 'orange'
-            net.show(pathDir+'/Call_Dependencies/'+'calls.html')
-
+            output_file = pathDir + '/call_dependencies/calls.html'
+            net.write_html(output_file)  # only writes the HTML
+            print(f"\nDependencies analysis saved to: {output_file}")
 
             node_colors = ['orange' if node == mainFileNode else 'blue' for node in g.nodes()]
             nx.draw_circular(g, with_labels=True, node_color=node_colors)
             plt.draw()
-            plt.savefig(pathDir+'/Call_Dependencies/'+'calls.png', dpi=300)
+            plt.savefig(pathDir+'/call_dependencies/'+'calls.png', dpi=300)
         else:
             print("Not a valid extension")
     else:
