@@ -6,7 +6,7 @@ import shutil
 import networkx as nx
 from pyvis.network import Network
 
-def analyse_dependencies(pathDir, fileType='py'):
+def analyse_dependencies(pathDir, fileType='py', mainFile='main.py'):
     #Load all files and append to a list
     if os.path.exists(pathDir):
         if fileType in ['py','txt','m']: 
@@ -55,7 +55,7 @@ def analyse_dependencies(pathDir, fileType='py'):
                             functions[key].append(line.split(" ")[-1])
                             if ":" in functions[key][-1]:
                                 functions[key][-1] = functions[key][-1].split(":")[0]
-            print(functions)
+            # print(functions)
             #Find the scripts which call other files
             callDepends = dict()
             allFuncs = dict()
@@ -67,7 +67,7 @@ def analyse_dependencies(pathDir, fileType='py'):
                         fName = funcName.split()[0]
                     else:
                         fName = funcName
-                    print(fName)
+                    # print(fName)
                     allFuncs[fName] = key
                 
 
@@ -87,13 +87,16 @@ def analyse_dependencies(pathDir, fileType='py'):
 
             net = Network(notebook=True, directed=True, cdn_resources='in_line')
             net.from_nx(g)
+
+            mainFileNode = mainFile.split(".")[0] + ".txt"  # matches how files were renamed
+
             for node in net.nodes:
-                if node['id'] == 'main.txt':
+                if node['id'] == mainFileNode:
                     node['color'] = 'orange'
             net.show(pathDir+'/Call_Dependencies/'+'calls.html')
 
 
-            node_colors = ['orange' if node == 'main.txt' else 'blue' for node in g.nodes()]
+            node_colors = ['orange' if node == mainFileNode else 'blue' for node in g.nodes()]
             nx.draw_circular(g, with_labels=True, node_color=node_colors)
             plt.draw()
             plt.savefig(pathDir+'/Call_Dependencies/'+'calls.png', dpi=300)
