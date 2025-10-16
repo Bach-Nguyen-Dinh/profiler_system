@@ -6,23 +6,45 @@ import shutil
 import networkx as nx
 from pyvis.network import Network
 
-def analyse_dependencies(pathDir, fileType='py', mainFile='main.py'):
+def analyse_dependencies(pathDir, fileType='py', mainFile='main.py'): 
+    # --- Files or patterns to ignore ---
+    ignore_files = {
+        "analyzer.py",
+        "code_dependencies_analyser.py",
+        "system_metrics.py",
+        "system_metrics_topaz.py",
+        "plotting.py"
+    }
     #Load all files and append to a list
     if os.path.exists(pathDir):
-        if fileType in ['py','txt','m']: 
-            fileType = "*.{}".format(fileType)
-            if not os.path.exists(pathDir+"/call_dependencies"):
-                os.mkdir(pathDir+"/call_dependencies")
+        if fileType in ['py', 'txt', 'm']: 
+            fileType = f"*.{fileType}"
+            output_dir = os.path.join(pathDir, "call_dependencies")
+            os.makedirs(output_dir, exist_ok=True)
+
+            # --- Clean up previous .txt files before new analysis ---
+            for old_file in glob.glob(os.path.join(output_dir, "*.txt")):
+                try:
+                    os.remove(old_file)
+                except Exception as e:
+                    print(f"Warning: could not remove {old_file}: {e}")
 
             for path, subdirs, files in os.walk(pathDir):
                 for name in files:
+                    # --- Skip ignored files ---
+                    if any(fnmatch(name, pattern) for pattern in ignore_files):
+                        continue
+
                     if fnmatch(name, fileType):
                         try:
-                            shutil.copy(os.path.join(path, name),pathDir+"/call_dependencies/"+name)
-                            # print(os.path.join(path, name))
-                            prefix = name.split(".")
-                            os.rename(pathDir+"/call_dependencies/"+name,pathDir+"/call_dependencies/"+prefix[0]+".txt")
-                        except:
+                            src = os.path.join(path, name)
+                            dst = os.path.join(output_dir, name)
+                            shutil.copy(src, dst)
+
+                            prefix = os.path.splitext(name)[0]
+                            os.rename(dst, os.path.join(output_dir, f"{prefix}.txt"))
+                        except Exception as e:
+                            print(f"Skipped {name}: {e}")
                             continue
 
             paths = glob.glob(pathDir+"/call_dependencies/*.txt*")
