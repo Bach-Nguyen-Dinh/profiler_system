@@ -13,7 +13,9 @@ def analyse_dependencies(pathDir, fileType='py', mainFile='main.py'):
         "code_dependencies_analyser.py",
         "system_metrics.py",
         "system_metrics_topaz.py",
-        "plotting.py"
+        "plotting.py",
+        "integrated_profiler_system.py",
+        "test_profiler_use.py"
     }
     #Load all files and append to a list
     if os.path.exists(pathDir):
