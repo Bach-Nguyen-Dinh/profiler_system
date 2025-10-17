@@ -6,7 +6,7 @@ python3 profiler_system/analyzer.py sar_colorization.py \
     -- \
     --sar_dir prepared_dataset/train/sar \
     --optical_dir prepared_dataset/train/optical \
-    --n_epochs 100 \
+    --n_epochs 2 \
     --batch_size 16 \
     --img_size 256 \
     --checkpoint_interval 10
