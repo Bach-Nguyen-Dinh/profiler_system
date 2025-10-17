@@ -7,6 +7,7 @@ import shutil
 import sys
 import importlib.util
 import argparse
+import subprocess
 
 # Organize logs into timestamped folders
 def organize_logs(base_dir="."):
@@ -45,54 +46,41 @@ def load_module_from_path(path):
     return module
 
 # take in the main function to analyze its dependencies
-def analyze_workflow(main_function, program_args=None, metrics_interval_ms=500, output_dir=".", csv_write_interval_s=5):
+def analyze_workflow(main_program, program_args=None, metrics_interval_ms=500, output_dir=".", csv_write_interval_s=5):
     if program_args is None:
         program_args = []
 
-    # Get base filename
-    current_file = os.path.basename(main_function)
+    current_file = os.path.basename(main_program)
 
-    # # Get current file name of the main script from the main_function
-    # current_file = os.path.basename(main_function.__code__.co_filename)
-
-    # Analyse code dependencies in the specified directory
+    # Analyze dependencies
     code_dependencies_analyser.analyse_dependencies(os.getcwd(), 'py', current_file)
 
-    # Start system metrics logging
+    # Start metrics logging
     logger = system_metrics.SystemMetricsLogger()
-    # Start logging metrics every 500 ms by default, write to CSV every 5 seconds by default
     logger.start(metrics_interval_ms, output_dir, csv_write_interval_s)
 
-    # # Run the main function
-    # main_function()
-
-    # Dynamically import and run the main program
-    # Backup current argv
-    original_argv = sys.argv.copy()
-    # Reset argv so cpu.py sees only its own name (no analyzer.py args)
-    sys.argv = [main_function] + program_args
-
     try:
-        module = load_module_from_path(main_function)
-        # If the module has a function named main(), call it
-        if hasattr(module, "main") and callable(module.main):
-            module.main()
-        else:
-            print(f"Running {main_function} directly (no main() found)...")
+        # Run the main program as a subprocess
+        # Remove stray '--' at the beginning of program_args (if any)
+        if len(program_args) > 0 and program_args[0] == "--":
+            program_args = program_args[1:]
+        cmd = ["python3", main_program] + program_args
+
+        print(f"\nRunning: {' '.join(cmd)}\n")
+        subprocess.run(cmd, check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"Error running {main_program}: {e}")
     finally:
-        # Restore argv after import
-        sys.argv = original_argv
+        # Stop logging
+        out_file = logger.stop()
+        out_file = os.path.basename(out_file).lstrip("./")
 
-    # Finalize logging
-    out_file = logger.stop()
+        # Plot the system metrics from the generated CSV file
+        plotting.plot_system_metrics(input_filename=out_file)
 
-    out_file = os.path.basename(out_file)
-    out_file = out_file.lstrip("./")
-    # Plot the system metrics from the generated CSV file
-    plotting.plot_system_metrics(input_filename=out_file)
+        # Organize logsinto timestamped folders
+        organize_logs(".")
 
-    # Organize logs into timestamped folders
-    organize_logs(".")
 
 def main():
     parser = argparse.ArgumentParser(description="Analyzer wrapper for Python programs.")
@@ -111,18 +99,6 @@ def main():
         args.output_dir,
         args.csv_write_interval_s
     )
-
-    # # Check that main_program was provided
-    # if len(sys.argv) < 2:
-    #     print("Usage: python3 my_app.py <main_program> [metrics_interval_ms] [output_dir] [csv_write_interval_s]")
-    #     sys.exit(1)
-
-    # main_program = sys.argv[1]
-    # metrics_interval_ms = int(sys.argv[2]) if len(sys.argv) > 2 else 500
-    # output_dir = sys.argv[3] if len(sys.argv) > 3 else "."
-    # csv_write_interval_s = int(sys.argv[4]) if len(sys.argv) > 4 else 5
-
-    # analyze_workflow(main_program, metrics_interval_ms, output_dir, csv_write_interval_s)
 
 if __name__ == "__main__":
     main()
