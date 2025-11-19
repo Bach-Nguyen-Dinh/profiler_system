@@ -6,7 +6,7 @@ import numpy as np
 
 from matplotlib.ticker import MaxNLocator
 
-INPUT_FILE = 'system_metrics_20250912_005818.csv'
+INPUT_FILE = 'system_metrics_20251114_113629.csv'
 
 def plot_system_metrics(input_filename=INPUT_FILE):
     print("\nPlotting the logs")
@@ -18,6 +18,12 @@ def plot_system_metrics(input_filename=INPUT_FILE):
 
     # Convert timestamp to datetime
     df['Timestamp'] = pd.to_datetime(df['Timestamp'])
+
+    # Safeguard: Replace negative values with the previous valid value
+    numeric_columns = df.select_dtypes(include=[np.number]).columns
+    for col in numeric_columns:
+        # Set negative values to NaN, then forward fill with previous value
+        df[col] = df[col].mask(df[col] < 0).ffill()
     
     # Create relative time column in seconds
     first_timestamp = df['Timestamp'].iloc[0]
@@ -26,7 +32,16 @@ def plot_system_metrics(input_filename=INPUT_FILE):
     # Calculate the time span to choose appropriate tick intervals
     time_span = df['RelativeTime'].max() - df['RelativeTime'].min()
     print(f"Time span: {time_span:.1f} seconds ({time_span/60:.1f} minutes)")
-    
+
+    # Dynamically scale time units: seconds or hours
+    if time_span >= 3600:  # 60 minutes or more
+        df['RelativeTime'] = df['RelativeTime'] / 3600  # Convert to hours
+        time_label = 'Time (h)'
+        print(f"Time axis will be displayed in hours ({time_span/3600:.1f} hours)")
+    else:
+        time_label = 'Time (s)'
+        print(f"Time axis will be displayed in seconds")
+
     # Use conservative tick intervals based on time span in seconds
     # Always limit to maximum 10-15 ticks regardless of time span
     if time_span <= 60:  # Less than 1 minute
@@ -48,7 +63,7 @@ def plot_system_metrics(input_filename=INPUT_FILE):
     ax1.plot(df['RelativeTime'].values, df['memory_usage'].values * df['total_memory'].values / 100 / (1024**3), 'b-', linewidth=2, label='Memory usage')
     ax1.set_title('Memory usage over time')
     ax1.set_ylabel('Memory usage (GB)')
-    ax1.set_xlabel('Time (s)')
+    ax1.set_xlabel(time_label)
     ax1.grid(True, alpha=0.7)
     ax1.legend()
     ax1.xaxis.set_major_locator(major_locator)
@@ -59,7 +74,7 @@ def plot_system_metrics(input_filename=INPUT_FILE):
     ax1_solo.plot(df['RelativeTime'].values, df['memory_usage'].values * df['total_memory'].values / 100 / (1024**3), 'b-', linewidth=2, label='Memory usage')
     ax1_solo.set_title('Memory usage over time')
     ax1_solo.set_ylabel('Memory usage (GB)')
-    ax1_solo.set_xlabel('Time (s)')
+    ax1_solo.set_xlabel(time_label)
     ax1_solo.grid(True, alpha=0.7)
     ax1_solo.legend()
     ax1_solo.xaxis.set_major_locator(major_locator)
@@ -81,7 +96,7 @@ def plot_system_metrics(input_filename=INPUT_FILE):
 
     ax2.set_title('CPU cores usage over time')
     ax2.set_ylabel('CPU usage (%)')
-    ax2.set_xlabel('Time (s)')
+    ax2.set_xlabel(time_label)
     ax2.grid(True, alpha=0.7)
     ax2.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     ax2.xaxis.set_major_locator(major_locator)
@@ -97,7 +112,7 @@ def plot_system_metrics(input_filename=INPUT_FILE):
                     linewidth=1.5, label=f'Core {core_num}', alpha=0.8)
     ax2_solo.set_title('CPU cores usage over time')
     ax2_solo.set_ylabel('CPU usage (%)')
-    ax2_solo.set_xlabel('Time (s)')
+    ax2_solo.set_xlabel(time_label)
     ax2_solo.grid(True, alpha=0.7)
     ax2_solo.legend()
     ax2_solo.xaxis.set_major_locator(major_locator)
@@ -120,7 +135,7 @@ def plot_system_metrics(input_filename=INPUT_FILE):
 
     ax3.set_title('CPU cores frequency over time')
     ax3.set_ylabel('Frequency (MHz)')
-    ax3.set_xlabel('Time (s)')
+    ax3.set_xlabel(time_label)
     ax3.grid(True, alpha=0.7)
     ax3.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     ax3.xaxis.set_major_locator(major_locator)
@@ -134,7 +149,7 @@ def plot_system_metrics(input_filename=INPUT_FILE):
                     linewidth=1.5, label=f'Core {core_num}', alpha=0.8)
     ax3_solo.set_title('CPU cores frequency over time')
     ax3_solo.set_ylabel('Frequency (MHz)')
-    ax3_solo.set_xlabel('Time (s)')
+    ax3_solo.set_xlabel(time_label)
     ax3_solo.grid(True, alpha=0.7)
     ax3_solo.legend()
     ax3_solo.xaxis.set_major_locator(major_locator)
@@ -149,7 +164,7 @@ def plot_system_metrics(input_filename=INPUT_FILE):
     ax4.plot(df['RelativeTime'].values, df['cpu_power'].values, 'r-', linewidth=2, label='CPU power')
     ax4.set_title('CPU power consumption over time')
     ax4.set_ylabel('Power (W)')
-    ax4.set_xlabel('Time (s)')
+    ax4.set_xlabel(time_label)
     ax4.grid(True, alpha=0.7)
     ax4.legend()
     ax4.xaxis.set_major_locator(major_locator)
@@ -160,7 +175,7 @@ def plot_system_metrics(input_filename=INPUT_FILE):
     ax4_solo.plot(df['RelativeTime'].values, df['cpu_power'].values, 'r-', linewidth=2, label='CPU power')
     ax4_solo.set_title('CPU power consumption over time')
     ax4_solo.set_ylabel('Power (W)')
-    ax4_solo.set_xlabel('Time (s)')
+    ax4_solo.set_xlabel(time_label)
     ax4_solo.grid(True, alpha=0.7)
     ax4_solo.legend()
     ax4_solo.xaxis.set_major_locator(major_locator)
@@ -175,7 +190,7 @@ def plot_system_metrics(input_filename=INPUT_FILE):
     ax5.plot(df['RelativeTime'].values, df['cpu_temperature'].values, 'orange', linewidth=2, label='CPU temperature')
     ax5.set_title('CPU temperature over time')
     ax5.set_ylabel('Temperature (°C)')
-    ax5.set_xlabel('Time (s)')
+    ax5.set_xlabel(time_label)
     ax5.grid(True, alpha=0.7)
     ax5.legend()
     ax5.xaxis.set_major_locator(major_locator)
@@ -186,7 +201,7 @@ def plot_system_metrics(input_filename=INPUT_FILE):
     ax5_solo.plot(df['RelativeTime'].values, df['cpu_temperature'].values, 'orange', linewidth=2, label='CPU temperature')
     ax5_solo.set_title('CPU temperature over time')
     ax5_solo.set_ylabel('Temperature (°C)')
-    ax5_solo.set_xlabel('Time (s)')
+    ax5_solo.set_xlabel(time_label)
     ax5_solo.grid(True, alpha=0.7)
     ax5_solo.legend()
     ax5_solo.xaxis.set_major_locator(major_locator)
@@ -201,7 +216,7 @@ def plot_system_metrics(input_filename=INPUT_FILE):
     ax6.plot(df['RelativeTime'].values, df['cpu_usage'].values, 'g-', linewidth=2, label='Overall CPU usage')
     ax6.set_title('Overall CPU usage over time')
     ax6.set_ylabel('CPU usage (%)')
-    ax6.set_xlabel('Time (s)')
+    ax6.set_xlabel(time_label)
     ax6.grid(True, alpha=0.7)
     ax6.legend()
     ax6.xaxis.set_major_locator(major_locator)
@@ -214,7 +229,7 @@ def plot_system_metrics(input_filename=INPUT_FILE):
     ax6_solo.plot(df['RelativeTime'].values, df['cpu_usage'].values, 'g-', linewidth=2, label='Overall CPU usage')
     ax6_solo.set_title('Overall CPU usage over time')
     ax6_solo.set_ylabel('CPU usage (%)')
-    ax6_solo.set_xlabel('Time (s)')
+    ax6_solo.set_xlabel(time_label)
     ax6_solo.grid(True, alpha=0.7)
     ax6_solo.legend()
     ax6_solo.xaxis.set_major_locator(major_locator)
