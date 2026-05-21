@@ -68,6 +68,8 @@ def analyze_workflow(main_program, program_args=None, metrics_interval_ms=500, o
 
         print(f"\nRunning: {' '.join(cmd)}\n")
         subprocess.run(cmd, check=True)
+    except KeyboardInterrupt:
+        pass
     except subprocess.CalledProcessError as e:
         print(f"Error running {main_program}: {e}")
     finally:
@@ -127,7 +129,10 @@ def main():
     )
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        pass
 
 
 
