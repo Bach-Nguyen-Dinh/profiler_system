@@ -1,4 +1,11 @@
-<!-- example to run the profiler with profiler's parameters and target program's parameters -->
+# Profiler System
+
+A Python-based system profiling tool that monitors CPU, memory, temperature, and power consumption during program execution.
+
+## Usage
+
+<!-- The "--" separates profiler parameters from target program parameters -->
+```bash
 python3 profiler_system/analyzer.py sar_colorization.py \
     --metrics_interval_ms 500 \
     --output_dir . \
@@ -10,4 +17,22 @@ python3 profiler_system/analyzer.py sar_colorization.py \
     --batch_size 16 \
     --img_size 256 \
     --checkpoint_interval 10
-<!-- The "--" is used to seperate parameters of profiler and that of target program -->
+```
+
+## Enabling CPU Power Metrics
+
+CPU power measurement requires a one-time permission setup. If you see a warning like:
+
+```
+[Warning] CPU power metrics unavailable: permission denied.
+```
+
+Run the following command once:
+
+```bash
+sudo python3 profiler_system/analyzer.py allow_cpu_power_metric_capture
+```
+
+After this, CPU power metrics will be collected automatically on all future runs without sudo. The setup persists across reboots.
+
+> **Note:** This requires an Intel CPU with RAPL support. On unsupported hardware, power metrics will be silently skipped and all other metrics will still be collected.

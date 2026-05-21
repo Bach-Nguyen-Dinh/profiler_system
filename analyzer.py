@@ -82,7 +82,33 @@ def analyze_workflow(main_program, program_args=None, metrics_interval_ms=500, o
         organize_logs(".")
 
 
+def setup_cpu_power_metrics():
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "setup_rapl_permissions.sh")
+    if not os.path.exists(script):
+        print("Error: setup script not found.")
+        sys.exit(1)
+    if os.geteuid() != 0:
+        print("This command must be run with sudo:")
+        print("  sudo python3 profiler_system/analyzer.py allow_cpu_power_metric_capture")
+        sys.exit(1)
+
+    print("Setting up CPU power metric capture...")
+    result = subprocess.run(
+        ["bash", script],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+    if result.returncode == 0:
+        print("CPU power metric capture enabled. You can now run the profiler normally.")
+    else:
+        print("Setup failed. You may need to check that your CPU supports Intel RAPL.")
+    sys.exit(result.returncode)
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "allow_cpu_power_metric_capture":
+        setup_cpu_power_metrics()
+
     parser = argparse.ArgumentParser(description="Analyzer wrapper for Python programs.")
     parser.add_argument("main_program", help="Path to the main Python script to analyze")
     parser.add_argument("--metrics_interval_ms", type=int, default=500)

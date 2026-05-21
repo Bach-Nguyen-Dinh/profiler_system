@@ -3,16 +3,33 @@ import time
 import threading
 import csv
 import os
+import sys
 import atexit
 import stat
 from datetime import datetime
 
+_RAPL_PATH = "/sys/class/powercap/intel-rapl:0/energy_uj"
+
 # ---------- Get System Metrics ----------
+def _check_rapl_permission():
+    if not os.path.exists(_RAPL_PATH):
+        return
+    try:
+        with open(_RAPL_PATH, "r") as f:
+            f.read()
+    except PermissionError:
+        print(
+            "\n[Error] CPU power metrics unavailable: permission denied.\n"
+            "  Run once to fix it, then re-run the profiler:\n"
+            "    sudo python3 profiler_system/analyzer.py allow_cpu_power_metric_capture\n"
+        )
+        sys.exit(1)
+
 def read_rapl_energy():
     try:
-        with open("/sys/class/powercap/intel-rapl:0/energy_uj", "r") as f:
-            return int(f.read().strip())  # Energy in microjoules
-    except FileNotFoundError:
+        with open(_RAPL_PATH, "r") as f:
+            return int(f.read().strip())
+    except (FileNotFoundError, PermissionError):
         return None
 
 def get_cpu_power():
@@ -82,6 +99,8 @@ class SystemMetricsLogger:
         atexit.register(self._flush_buffer_to_csv)
 
     def start(self, metrics_interval_ms=100, output_dir=".", csv_write_interval_s=None):
+        _check_rapl_permission()
+
         if self._running:
             print("Logger is already running!")
             return
