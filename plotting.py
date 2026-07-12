@@ -1,3 +1,4 @@
+import os
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -6,15 +7,16 @@ import numpy as np
 
 from matplotlib.ticker import MaxNLocator
 
-INPUT_FILE = 'system_metrics_20251114_113629.csv'
+INPUT_FILE = '16_p_cores/system_metrics_20260710_163800.csv'
 
-def plot_system_metrics(input_filename=INPUT_FILE):
+def plot_system_metrics(input_filename=INPUT_FILE, output_dir="."):
     print("\nPlotting the logs")
     # Read the CSV data
     df = pd.read_csv(input_filename)
 
     # Extract timestamp from filename for output files
-    timestamp = input_filename.split('_')[2] + '_' + input_filename.split('_')[3].split('.')[0]
+    basename = os.path.basename(input_filename)
+    timestamp = basename.split('_')[2] + '_' + basename.split('_')[3].split('.')[0]
 
     # Convert timestamp to datetime
     df['Timestamp'] = pd.to_datetime(df['Timestamp'])
@@ -69,7 +71,7 @@ def plot_system_metrics(input_filename=INPUT_FILE):
     ax1.xaxis.set_major_locator(major_locator)
 
     # Save memory usage subplot
-    fig1 = plt.figure(figsize=(10, 6))
+    fig1 = plt.figure(figsize=(14, 8))
     ax1_solo = fig1.add_subplot(111)
     ax1_solo.plot(df['RelativeTime'].values, df['memory_usage'].values * df['total_memory'].values / 100 / (1024**3), 'b-', linewidth=2, label='Memory usage')
     ax1_solo.set_title('Memory usage over time')
@@ -79,7 +81,7 @@ def plot_system_metrics(input_filename=INPUT_FILE):
     ax1_solo.legend()
     ax1_solo.xaxis.set_major_locator(major_locator)
     plt.tight_layout()
-    plt.savefig(f'memory_usage_{timestamp}.png', dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, f'memory_usage_{timestamp}.png'), dpi=300, bbox_inches='tight')
     plt.close(fig1)
 
     print("Plotted Memory Usage")
@@ -104,22 +106,21 @@ def plot_system_metrics(input_filename=INPUT_FILE):
     ax2.set_yticks(range(0, 101, 20))  # Only show ticks from 0 to 100, every 20%
 
     # Save CPU cores usage subplot
-    fig2 = plt.figure(figsize=(12, 6))
+    fig2 = plt.figure(figsize=(14, 8))
     ax2_solo = fig2.add_subplot(111)
     for i, core_col in enumerate(core_columns):
         core_num = core_col.split('_')[1]
-        ax2_solo.plot(df['RelativeTime'].values, df[core_col].values, color=colors[i], 
+        ax2_solo.plot(df['RelativeTime'].values, df[core_col].values, color=colors[i],
                     linewidth=1.5, label=f'Core {core_num}', alpha=0.8)
     ax2_solo.set_title('CPU cores usage over time')
     ax2_solo.set_ylabel('CPU usage (%)')
     ax2_solo.set_xlabel(time_label)
     ax2_solo.grid(True, alpha=0.7)
-    ax2_solo.legend()
     ax2_solo.xaxis.set_major_locator(major_locator)
-    ax2_solo.set_ylim(-5, 105)  # Visual padding
-    ax2_solo.set_yticks(range(0, 101, 20))  # Only show ticks from 0 to 100, every 20%
-    plt.tight_layout()
-    plt.savefig(f'cpu_cores_usage_{timestamp}.png', dpi=300, bbox_inches='tight')
+    ax2_solo.set_ylim(0, 105)
+    ax2_solo.set_yticks(range(0, 101, 20))
+    ax2_solo.legend(bbox_to_anchor=(1.02, 0.5), loc='center left', fontsize=11, frameon=True)
+    fig2.savefig(os.path.join(output_dir, f'cpu_cores_usage_{timestamp}.png'), dpi=300, bbox_inches='tight')
     plt.close(fig2)
 
     print("Plotted CPU Cores Usage")
@@ -127,10 +128,11 @@ def plot_system_metrics(input_filename=INPUT_FILE):
     # 3. CPU Cores Frequency
     ax3 = axes[0, 2]
     freq_columns = [col for col in df.columns if col.startswith('core_') and col.endswith('_frequency')]
+    freq_colors = plt.cm.tab10(np.linspace(0, 1, len(freq_columns)))
 
     for i, freq_col in enumerate(freq_columns):
         core_num = freq_col.split('_')[1]
-        ax3.plot(df['RelativeTime'].values, df[freq_col].values, color=colors[i], 
+        ax3.plot(df['RelativeTime'].values, df[freq_col].values, color=freq_colors[i],
                 linewidth=1.5, label=f'Core {core_num}', alpha=0.8)
 
     ax3.set_title('CPU cores frequency over time')
@@ -141,20 +143,19 @@ def plot_system_metrics(input_filename=INPUT_FILE):
     ax3.xaxis.set_major_locator(major_locator)
 
     # Save CPU cores frequency subplot
-    fig3 = plt.figure(figsize=(12, 6))
+    fig3 = plt.figure(figsize=(14, 8))
     ax3_solo = fig3.add_subplot(111)
     for i, freq_col in enumerate(freq_columns):
         core_num = freq_col.split('_')[1]
-        ax3_solo.plot(df['RelativeTime'].values, df[freq_col].values, color=colors[i], 
+        ax3_solo.plot(df['RelativeTime'].values, df[freq_col].values, color=freq_colors[i],
                     linewidth=1.5, label=f'Core {core_num}', alpha=0.8)
     ax3_solo.set_title('CPU cores frequency over time')
     ax3_solo.set_ylabel('Frequency (MHz)')
     ax3_solo.set_xlabel(time_label)
     ax3_solo.grid(True, alpha=0.7)
-    ax3_solo.legend()
     ax3_solo.xaxis.set_major_locator(major_locator)
-    plt.tight_layout()
-    plt.savefig(f'cpu_cores_frequency_{timestamp}.png', dpi=300, bbox_inches='tight')
+    ax3_solo.legend(bbox_to_anchor=(1.02, 0.5), loc='center left', fontsize=11, frameon=True)
+    fig3.savefig(os.path.join(output_dir, f'cpu_cores_frequency_{timestamp}.png'), dpi=300, bbox_inches='tight')
     plt.close(fig3)
 
     print("Plotted CPU Cores Frequency")
@@ -170,7 +171,7 @@ def plot_system_metrics(input_filename=INPUT_FILE):
     ax4.xaxis.set_major_locator(major_locator)
 
     # Save CPU power subplot
-    fig4 = plt.figure(figsize=(10, 6))
+    fig4 = plt.figure(figsize=(14, 8))
     ax4_solo = fig4.add_subplot(111)
     ax4_solo.plot(df['RelativeTime'].values, df['cpu_power'].values, 'r-', linewidth=2, label='CPU power')
     ax4_solo.set_title('CPU power consumption over time')
@@ -180,7 +181,7 @@ def plot_system_metrics(input_filename=INPUT_FILE):
     ax4_solo.legend()
     ax4_solo.xaxis.set_major_locator(major_locator)
     plt.tight_layout()
-    plt.savefig(f'cpu_power_{timestamp}.png', dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, f'cpu_power_{timestamp}.png'), dpi=300, bbox_inches='tight')
     plt.close(fig4)
 
     print("Plotted CPU Power Consumption")
@@ -196,7 +197,7 @@ def plot_system_metrics(input_filename=INPUT_FILE):
     ax5.xaxis.set_major_locator(major_locator)
 
     # Save CPU temperature subplot
-    fig5 = plt.figure(figsize=(10, 6))
+    fig5 = plt.figure(figsize=(14, 8))
     ax5_solo = fig5.add_subplot(111)
     ax5_solo.plot(df['RelativeTime'].values, df['cpu_temperature'].values, 'orange', linewidth=2, label='CPU temperature')
     ax5_solo.set_title('CPU temperature over time')
@@ -206,7 +207,7 @@ def plot_system_metrics(input_filename=INPUT_FILE):
     ax5_solo.legend()
     ax5_solo.xaxis.set_major_locator(major_locator)
     plt.tight_layout()
-    plt.savefig(f'cpu_temperature_{timestamp}.png', dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, f'cpu_temperature_{timestamp}.png'), dpi=300, bbox_inches='tight')
     plt.close(fig5)
 
     print("Plotted CPU Temperature")
@@ -224,7 +225,7 @@ def plot_system_metrics(input_filename=INPUT_FILE):
     ax6.set_yticks(range(0, 101, 20))  # Only show ticks from 0 to 100, every 20%
 
     # Save overall CPU usage subplot
-    fig6 = plt.figure(figsize=(10, 6))
+    fig6 = plt.figure(figsize=(14, 8))
     ax6_solo = fig6.add_subplot(111)
     ax6_solo.plot(df['RelativeTime'].values, df['cpu_usage'].values, 'g-', linewidth=2, label='Overall CPU usage')
     ax6_solo.set_title('Overall CPU usage over time')
@@ -236,7 +237,7 @@ def plot_system_metrics(input_filename=INPUT_FILE):
     ax6_solo.set_ylim(-5, 105)  # Visual padding
     ax6_solo.set_yticks(range(0, 101, 20))  # Only show ticks from 0 to 100, every 20%
     plt.tight_layout()
-    plt.savefig(f'overall_cpu_usage_{timestamp}.png', dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, f'overall_cpu_usage_{timestamp}.png'), dpi=300, bbox_inches='tight')
     plt.close(fig6)
 
     print("Plotted Overall CPU Usage")
@@ -245,7 +246,7 @@ def plot_system_metrics(input_filename=INPUT_FILE):
     plt.tight_layout()
 
     # Optional: Save the combined figure
-    plt.savefig(f'system_metrics_dashboard_{timestamp}.png', dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, f'system_metrics_dashboard_{timestamp}.png'), dpi=300, bbox_inches='tight')
 
 if __name__ == "__main__":
     plot_system_metrics(INPUT_FILE)
