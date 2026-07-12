@@ -1,133 +1,120 @@
-import matplotlib.pyplot as plt
+import ast
 import os
 import glob
-from fnmatch import fnmatch
 import shutil
 import networkx as nx
+import matplotlib.pyplot as plt
 from pyvis.network import Network
 
-def analyse_dependencies(pathDir, fileType='py', mainFile='main.py'): 
-    # --- Files or patterns to ignore ---
-    ignore_files = {
-        "analyzer.py",
-        "code_dependencies_analyser.py",
-        "system_metrics.py",
-        "system_metrics_topaz.py",
-        "plotting.py",
-        "integrated_profiler_system.py",
-        "test_profiler_use.py"
-    }
-    #Load all files and append to a list
-    if os.path.exists(pathDir):
-        if fileType in ['py', 'txt', 'm']: 
-            fileType = f"*.{fileType}"
-            output_dir = os.path.join(pathDir, "call_dependencies")
-            os.makedirs(output_dir, exist_ok=True)
 
-            # --- Clean up previous .txt files before new analysis ---
-            for old_file in glob.glob(os.path.join(output_dir, "*.txt")):
-                try:
-                    os.remove(old_file)
-                except Exception as e:
-                    print(f"Warning: could not remove {old_file}: {e}")
+def _resolve_local_module(module_name, file_dir, project_root):
+    for base in (file_dir, project_root):
+        candidate = os.path.join(base, module_name + '.py')
+        if os.path.isfile(candidate):
+            return os.path.abspath(candidate)
+        candidate = os.path.join(base, module_name, '__init__.py')
+        if os.path.isfile(candidate):
+            return os.path.abspath(candidate)
+    return None
 
-            for path, subdirs, files in os.walk(pathDir):
-                for name in files:
-                    # --- Skip ignored files ---
-                    if any(fnmatch(name, pattern) for pattern in ignore_files):
-                        continue
 
-                    if fnmatch(name, fileType):
-                        try:
-                            src = os.path.join(path, name)
-                            dst = os.path.join(output_dir, name)
-                            shutil.copy(src, dst)
+def _get_local_imports(filepath, project_root):
+    try:
+        with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+            source = f.read()
+        tree = ast.parse(source, filename=filepath)
+    except (SyntaxError, OSError):
+        return []
 
-                            prefix = os.path.splitext(name)[0]
-                            os.rename(dst, os.path.join(output_dir, f"{prefix}.txt"))
-                        except Exception as e:
-                            print(f"Skipped {name}: {e}")
-                            continue
+    file_dir = os.path.dirname(os.path.abspath(filepath))
+    results = []
 
-            paths = glob.glob(pathDir+"/call_dependencies/*.txt*")
-            files = dict()
-            for path in paths:
-                with open(path) as f:
-                    files[path.split("/")[-1]] = [(line) for line in f.readlines()]
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                resolved = _resolve_local_module(alias.name.split('.')[0], file_dir, project_root)
+                if resolved:
+                    results.append(resolved)
+        elif isinstance(node, ast.ImportFrom):
+            if node.module is None:
+                continue
+            resolved = _resolve_local_module(node.module.split('.')[0], file_dir, project_root)
+            if resolved:
+                results.append(resolved)
 
-            #Find the functions in each file
-            functions = dict()
-            
-            for key in list(files.keys()):
-                functions[key] = []
-                for line in files[key]:
-                    if fileType == "*.m":
-                        if 'function' in line.split(" ") and "%" not in line:
-                            # print(line)
-                            funcName = line.split("=")[1]
-                            functions[key].append(funcName)
-                    if fileType == "*.py":
-                        # print("Finding python functions")
-                        if 'def' in line.split(" ") and "#" != line[0] and "import" not in line and "__init__" not in line:
-                            funcName = line.split()[1].split("(")[0]
-                            if funcName != '':
-                                functions[key].append(funcName)
-                        #Finding python classes
-                        if "class" in line:
-                            functions[key].append(line.split(" ")[-1])
-                            if ":" in functions[key][-1]:
-                                functions[key][-1] = functions[key][-1].split(":")[0]
-            # print(functions)
-            #Find the scripts which call other files
-            callDepends = dict()
-            allFuncs = dict()
-            for key in list(functions.keys()):
-                for i in  range(len(functions[key])):
-                    funcName = functions[key][i].split("(")[0] 
-                    
-                    if " " in funcName:
-                        fName = funcName.split()[0]
-                    else:
-                        fName = funcName
-                    # print(fName)
-                    allFuncs[fName] = key
-                
+    return results
 
-            for key in list(files.keys()):
-                callDepends[key] = []
-                for line in files[key]:
-                    for fName in list(allFuncs.keys()):
-                        if fName in line and allFuncs[fName] != key:
-                            callDepends[key].append(allFuncs[fName])
-                callDepends[key] = list(set(callDepends[key]))
 
-            # plot dependencies
-            g = nx.DiGraph()
-            g.add_nodes_from(callDepends.keys())
-            for k, v in callDepends.items():
-                g.add_edges_from(([(k, t) for t in v]))
+def _collect_all(filepath, project_root, visited=None):
+    if visited is None:
+        visited = set()
+    filepath = os.path.abspath(filepath)
+    if filepath in visited:
+        return visited
+    visited.add(filepath)
+    for dep in _get_local_imports(filepath, project_root):
+        _collect_all(dep, project_root, visited)
+    return visited
 
-            net = Network(notebook=True, directed=True, cdn_resources='in_line')
-            net.from_nx(g)
 
-            mainFileNode = mainFile.split(".")[0] + ".txt"  # matches how files were renamed
+def _node_label(filepath):
+    return os.path.basename(filepath)
 
-            for node in net.nodes:
-                if node['id'] == mainFileNode:
-                    node['color'] = 'orange'
-            output_file = pathDir + '/call_dependencies/calls.html'
-            net.write_html(output_file)  # only writes the HTML
-            print(f"\nDependencies analysis saved to: {output_file}")
 
-            node_colors = ['orange' if node == mainFileNode else 'blue' for node in g.nodes()]
-            nx.draw_circular(g, with_labels=True, node_color=node_colors)
-            plt.draw()
-            plt.savefig(pathDir+'/call_dependencies/'+'calls.png', dpi=300)
-        else:
-            print("Not a valid extension")
-    else:
-        print("Not a valid path")
+def analyse_dependencies(pathDir, fileType='py', mainFile='main.py'):  # noqa: ARG001 fileType kept for API compat
+    main_path = os.path.join(pathDir, mainFile)
+    if not os.path.isfile(main_path):
+        print(f"Main file not found: {main_path}")
+        return
+
+    output_dir = os.path.join(pathDir, "call_dependencies")
+    os.makedirs(output_dir, exist_ok=True)
+
+    for old in glob.glob(os.path.join(output_dir, "*.txt")):
+        try:
+            os.remove(old)
+        except Exception as e:
+            print(f"Warning: could not remove {old}: {e}")
+
+    # Walk imports recursively; stop at stdlib/third-party (not resolvable as local files)
+    all_files = _collect_all(main_path, pathDir)
+
+    for src in all_files:
+        name = os.path.basename(src)
+        dst = os.path.join(output_dir, os.path.splitext(name)[0] + '.txt')
+        try:
+            shutil.copy(src, dst)
+        except Exception as e:
+            print(f"Skipped {name}: {e}")
+
+    # Build directed graph: edge from importer → imported
+    g = nx.DiGraph()
+    for src in all_files:
+        g.add_node(_node_label(src))
+        for dep in _get_local_imports(src, pathDir):
+            if dep in all_files:
+                g.add_edge(_node_label(src), _node_label(dep))
+
+    main_label = mainFile
+
+    net = Network(notebook=True, directed=True, cdn_resources='in_line')
+    net.from_nx(g)
+    for node in net.nodes:
+        if node['id'] == main_label:
+            node['color'] = 'orange'
+
+    output_file = os.path.join(pathDir, 'call_dependencies', 'calls.html')
+    net.write_html(output_file)
+    print(f"\nDependencies analysis saved to: {output_file}")
+
+    node_colors = ['orange' if n == main_label else 'blue' for n in g.nodes()]
+    nx.draw_circular(g, with_labels=True, node_color=node_colors)
+    plt.draw()
+    plt.savefig(os.path.join(pathDir, 'call_dependencies', 'calls.png'), dpi=300)
+    plt.close()
+
 
 if __name__ == "__main__":
     pathDir = input("Enter the directory path to be analysed: ")
-    analyse_dependencies(pathDir)
+    mainFile = input("Enter the main file name (e.g. main.py): ")
+    analyse_dependencies(pathDir, mainFile=mainFile)
