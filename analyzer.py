@@ -46,14 +46,18 @@ def load_module_from_path(path):
     return module
 
 # take in the main function to analyze its dependencies
-def analyze_workflow(main_program, program_args=None, metrics_interval_ms=500, output_dir=".", csv_write_interval_s=5):
+def analyze_workflow(main_program, program_args=None, metrics_interval_ms=500, output_dir=None, csv_write_interval_s=5):
     if program_args is None:
         program_args = []
 
     current_file = os.path.basename(main_program)
 
+    script_dir = os.path.dirname(os.path.abspath(main_program))
+    if output_dir is None:
+        output_dir = script_dir
+
     # Analyze dependencies
-    code_dependencies_analyser.analyse_dependencies(os.getcwd(), 'py', current_file)
+    code_dependencies_analyser.analyse_dependencies(script_dir, 'py', current_file)
 
     # Start metrics logging
     logger = system_metrics.SystemMetricsLogger()
@@ -75,13 +79,12 @@ def analyze_workflow(main_program, program_args=None, metrics_interval_ms=500, o
     finally:
         # Stop logging
         out_file = logger.stop()
-        out_file = os.path.basename(out_file).lstrip("./")
 
         # Plot the system metrics from the generated CSV file
-        plotting.plot_system_metrics(input_filename=out_file)
+        plotting.plot_system_metrics(input_filename=out_file, output_dir=output_dir)
 
-        # Organize logsinto timestamped folders
-        organize_logs(".")
+        # Organize logs into timestamped folders
+        organize_logs(output_dir)
 
 
 def setup_cpu_power_metrics():
@@ -114,7 +117,7 @@ def main():
     parser = argparse.ArgumentParser(description="Analyzer wrapper for Python programs.")
     parser.add_argument("main_program", help="Path to the main Python script to analyze")
     parser.add_argument("--metrics_interval_ms", type=int, default=500)
-    parser.add_argument("--output_dir", default=".")
+    parser.add_argument("--output_dir", default=None)
     parser.add_argument("--csv_write_interval_s", type=int, default=5)
 
     # Everything after "--" goes to the main program
