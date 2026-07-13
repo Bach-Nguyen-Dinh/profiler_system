@@ -31,17 +31,21 @@ import subprocess
 import sys
 
 # --- Fixed environment layout -------------------------------------------------
+# This program lives alongside plotting_power_compare.py and the E-core on/off
+# scripts, so those (and the output) are resolved relative to this file.
+# analyzer.py stayed in profiler_system/, so it keeps an absolute path.
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROFILER_SYSTEM = "/home/sarthak/profiler_system"
 WORKSPACE = "/home/sarthak/workspace"
 SAR_DIR = os.path.join(WORKSPACE, "SAR_codebase")
 LOGS_DIR = os.path.join(SAR_DIR, "logs")
 ANALYZER = os.path.join(PROFILER_SYSTEM, "analyzer.py")
-PLOTTING = os.path.join(PROFILER_SYSTEM, "plotting_power_compare.py")
-COMPARE_ROOT = os.path.join(PROFILER_SYSTEM, "power_compare_32_core_16_p_core_cphd")
+PLOTTING = os.path.join(SCRIPT_DIR, "plotting_power_compare.py")
+COMPARE_ROOT = SCRIPT_DIR
 
 # The turn-on script's filename really does contain a comma; the turn-off one a dot.
-TURN_ON_SCRIPT = os.path.join(WORKSPACE, "turn_on_all_e_core,sh")
-TURN_OFF_SCRIPT = os.path.join(WORKSPACE, "turn_off_all_e_core.sh")
+TURN_ON_SCRIPT = os.path.join(SCRIPT_DIR, "turn_on_all_e_core,sh")
+TURN_OFF_SCRIPT = os.path.join(SCRIPT_DIR, "turn_off_all_e_core.sh")
 
 
 def run(cmd, cwd=None):
