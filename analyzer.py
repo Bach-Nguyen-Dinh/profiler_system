@@ -1,4 +1,16 @@
 import os
+
+# Pin matplotlib's cache to a persistent, writable dir *before* importing
+# anything that imports matplotlib (plotting). When the profiler runs under
+# sudo, root's default matplotlib cache falls back to a temp dir under /tmp,
+# which systemd empties on every reboot (`D /tmp` in tmpfiles.d) — forcing a
+# ~25s font-cache rebuild on the first run after each boot. Anchoring the
+# cache next to this script makes that rebuild a one-time cost.
+os.environ.setdefault(
+    "MPLCONFIGDIR",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), ".mpl_cache"),
+)
+
 import system_metrics as system_metrics
 import plotting
 import code_dependencies_analyser
@@ -8,6 +20,10 @@ import sys
 import importlib.util
 import argparse
 import subprocess
+from datetime import datetime
+
+def _log_step(message):
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}")
 
 # Organize logs into timestamped folders
 def organize_logs(base_dir="."):
@@ -56,12 +72,18 @@ def analyze_workflow(main_program, program_args=None, metrics_interval_ms=500, o
     if output_dir is None:
         output_dir = script_dir
 
+    _log_step(f"Starting workflow for {main_program}")
+
     # Analyze dependencies
-    code_dependencies_analyser.analyse_dependencies(script_dir, 'py', current_file)
+    # _log_step("Analyzing code dependencies...")
+    # code_dependencies_analyser.analyse_dependencies(script_dir, 'py', current_file)
+    # _log_step("Dependency analysis complete")
 
     # Start metrics logging
+    _log_step("Starting metrics logging...")
     logger = system_metrics.SystemMetricsLogger()
     logger.start(metrics_interval_ms, output_dir, csv_write_interval_s)
+    _log_step("Metrics logging started")
 
     try:
         # Run the main program as a subprocess
@@ -70,21 +92,28 @@ def analyze_workflow(main_program, program_args=None, metrics_interval_ms=500, o
             program_args = program_args[1:]
         cmd = ["python3", main_program] + program_args
 
-        print(f"\nRunning: {' '.join(cmd)}\n")
+        _log_step(f"Running: {' '.join(cmd)}")
         subprocess.run(cmd, check=True)
+        _log_step("Target program finished")
     except KeyboardInterrupt:
         pass
     except subprocess.CalledProcessError as e:
         print(f"Error running {main_program}: {e}")
     finally:
         # Stop logging
+        _log_step("Stopping metrics logging...")
         out_file = logger.stop()
+        _log_step("Metrics logging stopped")
 
         # Plot the system metrics from the generated CSV file
+        _log_step("Plotting system metrics...")
         plotting.plot_system_metrics(input_filename=out_file, output_dir=output_dir)
+        _log_step("Plotting complete")
 
         # Organize logs into timestamped folders
+        _log_step("Organizing logs...")
         organize_logs(output_dir)
+        _log_step("Workflow complete")
 
 
 def setup_cpu_power_metrics():

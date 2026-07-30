@@ -6,11 +6,15 @@ from datetime import datetime
 import numpy as np
 
 from matplotlib.ticker import MaxNLocator
+from datetime import datetime
+
+def _log_step(message):
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}")
 
 INPUT_FILE = '16_p_cores/system_metrics_20260710_163800.csv'
 
 def plot_system_metrics(input_filename=INPUT_FILE, output_dir="."):
-    print("\nPlotting the logs")
+    _log_step("\nPlotting the logs")
     # Read the CSV data
     df = pd.read_csv(input_filename)
 
@@ -39,10 +43,10 @@ def plot_system_metrics(input_filename=INPUT_FILE, output_dir="."):
     if time_span >= 3600:  # 60 minutes or more
         df['RelativeTime'] = df['RelativeTime'] / 3600  # Convert to hours
         time_label = 'Time (h)'
-        print(f"Time axis will be displayed in hours ({time_span/3600:.1f} hours)")
+        _log_step(f"Time axis will be displayed in hours ({time_span/3600:.1f} hours)")
     else:
         time_label = 'Time (s)'
-        print(f"Time axis will be displayed in seconds")
+        _log_step(f"Time axis will be displayed in seconds")
 
     # Use conservative tick intervals based on time span in seconds
     # Always limit to maximum 10-15 ticks regardless of time span
@@ -84,7 +88,7 @@ def plot_system_metrics(input_filename=INPUT_FILE, output_dir="."):
     plt.savefig(os.path.join(output_dir, f'memory_usage_{timestamp}.png'), dpi=300, bbox_inches='tight')
     plt.close(fig1)
 
-    print("Plotted Memory Usage")
+    _log_step("Plotted Memory Usage")
 
     # 2. CPU Cores Usage
     ax2 = axes[0, 1]
@@ -123,7 +127,7 @@ def plot_system_metrics(input_filename=INPUT_FILE, output_dir="."):
     fig2.savefig(os.path.join(output_dir, f'cpu_cores_usage_{timestamp}.png'), dpi=300, bbox_inches='tight')
     plt.close(fig2)
 
-    print("Plotted CPU Cores Usage")
+    _log_step("Plotted CPU Cores Usage")
 
     # 3. CPU Cores Frequency
     ax3 = axes[0, 2]
@@ -158,7 +162,7 @@ def plot_system_metrics(input_filename=INPUT_FILE, output_dir="."):
     fig3.savefig(os.path.join(output_dir, f'cpu_cores_frequency_{timestamp}.png'), dpi=300, bbox_inches='tight')
     plt.close(fig3)
 
-    print("Plotted CPU Cores Frequency")
+    _log_step("Plotted CPU Cores Frequency")
 
     # 4. CPU Power
     ax4 = axes[1, 0]
@@ -184,7 +188,7 @@ def plot_system_metrics(input_filename=INPUT_FILE, output_dir="."):
     plt.savefig(os.path.join(output_dir, f'cpu_power_{timestamp}.png'), dpi=300, bbox_inches='tight')
     plt.close(fig4)
 
-    print("Plotted CPU Power Consumption")
+    _log_step("Plotted CPU Power Consumption")
 
     # 5. CPU Temperature
     ax5 = axes[1, 1]
@@ -210,7 +214,7 @@ def plot_system_metrics(input_filename=INPUT_FILE, output_dir="."):
     plt.savefig(os.path.join(output_dir, f'cpu_temperature_{timestamp}.png'), dpi=300, bbox_inches='tight')
     plt.close(fig5)
 
-    print("Plotted CPU Temperature")
+    _log_step("Plotted CPU Temperature")
 
     # 6. Overall CPU Usage
     ax6 = axes[1, 2]
@@ -240,7 +244,7 @@ def plot_system_metrics(input_filename=INPUT_FILE, output_dir="."):
     plt.savefig(os.path.join(output_dir, f'overall_cpu_usage_{timestamp}.png'), dpi=300, bbox_inches='tight')
     plt.close(fig6)
 
-    print("Plotted Overall CPU Usage")
+    _log_step("Plotted Overall CPU Usage")
 
     # Adjust layout to prevent overlap
     plt.tight_layout()
