@@ -5,3 +5,5 @@ CLAUDE.md
 *.png
 
 *.csv
+
+.mpl_cache/
