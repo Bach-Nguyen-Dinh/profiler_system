@@ -79,3 +79,57 @@ profiler /home/sarthak/workspace/SAR_codebase/cphd_aic.py --metrics_interval_ms 
   
 
 > **Note:** The wrapper hard-codes the path to this repo at install time, so keep the repo in the same location after installing. If you move it, re-run `sudo bash install.sh`.
+
+## Histograms (`histograms/`)
+
+The scripts in `histograms/` are standalone post-hoc analysis tools. They are not part of the profiling pipeline — run them afterwards against a CSV a profiling run already produced, to summarize how the cores were distributed across frequency and utilisation ranges.
+
+Every script takes the CSV as its first argument:
+
+```bash
+python3 histograms/<script>.py <system_metrics_*.csv> [options]
+```
+
+**Options (all scripts):**
+- `-o`, `--output_dir` — where to write the PNGs (default: the script's own directory, i.e. `histograms/`)
+- `--max_freq` — max CPU frequency in MHz, used to normalize frequencies to a percentage (default: 4000)
+- `--plots` — which histograms to generate (default: all; see the table below)
+- `--show` — display each plot interactively as well as saving it. Without this, plots are only written to disk.
+
+**Example:**
+
+```bash
+python3 histograms/cores_active_histogram.py \
+    logs/20260115_154219/system_metrics_20260115_154219.csv \
+    --output_dir ~/analysis/january_run \
+    --max_freq 5200
+```
+
+**Available scripts:**
+
+| Script | `--plots` values | What it shows |
+|---|---|---|
+| `core_frequency_histogram.py` | `count`, `average` | Cores grouped by frequency band — every sample, then per-core averages |
+| `each_core_frequency_histogram.py` | *(single plot)* | Frequency band distribution broken out per core, as grouped bars |
+| `cores_active_histogram.py` | `average`, `active`, `p_and_e` | Cores grouped by average utilisation, by percentage of time active, and the P-core vs E-core split |
+| `p_core_histograms.py` | `freq_count`, `freq_average`, `freq_each_core`, `average`, `active`, `p_and_e` | All six of the above for a P-cores-only run; PNGs are prefixed `p_core*` |
+| `e_core_histograms.py` | same as above | The same set for an E-cores-only run; PNGs are prefixed `e_core*` |
+
+Generate a subset by naming the plots you want:
+
+```bash
+python3 histograms/p_core_histograms.py <csv> --plots freq_average active
+```
+
+### P-cores and E-cores
+
+The `p_and_e` plot compares performance cores against efficiency cores, which **only exist on Intel 12th gen and newer**. On older CPUs every core is the same kind of core, so there is nothing to compare — skip that plot via `--plots`.
+
+On a hybrid CPU, which `core_<N>_*` column belongs to which class is hardware-specific and cannot be assumed from the column index. Check the layout with `lscpu -e` on the machine that produced the CSV, then pass the performance-core ids:
+
+```bash
+# defaults to 0-15, the i9-13900E layout; any id not listed counts as an E-core
+python3 histograms/cores_active_histogram.py <csv> --plots p_and_e --p_cores 0-7,16-23
+```
+
+`--p_cores` accepts ranges (`0-15`), explicit ids (`0,1,2`), or a mix of both.

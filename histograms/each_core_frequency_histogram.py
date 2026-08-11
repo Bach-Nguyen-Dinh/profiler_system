@@ -1,42 +1,83 @@
+"""Per-core frequency distribution (grouped bars, one group per core) from a profiler CSV.
+
+Usage:
+    python3 each_core_frequency_histogram.py <system_metrics_*.csv> [-o OUT_DIR]
+                                             [--max_freq 4000] [--show]
+"""
+
+import argparse
+import os
+
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 
-csv_path = "/home/isabel/YOLO/bach_metrics/new_analyzer/profiler_system/logs/20251128_163813_5_minutes_with_gps/system_metrics_20251128_163813.csv"
-df = pd.read_csv(csv_path)
+BINS = [0, 60, 70, 80, 90, 100]
+LABELS = ['<60%', '60-70%', '70-80%', '80-90%', '>90%']
 
-freq_columns = [col for col in df.columns if col.endswith('_frequency')]
-max_freq = 4000
-bins = [0, 60, 70, 80, 90, 100]
-labels = ['<60%', '60-70%', '70-80%', '80-90%', '>90%']
 
-# Prepare counts matrix: rows=cores, cols=bins
-counts_matrix = []
+def plot_each_core_frequency(df, output_dir, max_freq, show, filename='each_core_frequency_histogram.png'):
+    freq_columns = [col for col in df.columns if col.endswith('_frequency')]
 
-for col in freq_columns:
-    freq_percent = (df[col] / max_freq) * 100
-    bin_indices = np.digitize(freq_percent, bins)
-    counts = [np.sum(bin_indices == i) for i in range(1, len(bins))]
-    counts_matrix.append(counts)
+    # Prepare counts matrix: rows=cores, cols=bins
+    counts_matrix = []
 
-counts_matrix = np.array(counts_matrix)  # shape (cores, bins)
+    for col in freq_columns:
+        freq_percent = (df[col] / max_freq) * 100
+        bin_indices = np.digitize(freq_percent, BINS)
+        counts = [np.sum(bin_indices == i) for i in range(1, len(BINS))]
+        counts_matrix.append(counts)
 
-# Plot grouped bar chart
-num_cores = len(freq_columns)
-num_bins = len(labels)
-bar_width = 0.8 / num_bins
-x = np.arange(num_cores)
+    counts_matrix = np.array(counts_matrix)  # shape (cores, bins)
 
-plt.figure(figsize=(15,6))
+    # Plot grouped bar chart
+    num_cores = len(freq_columns)
+    num_bins = len(LABELS)
+    bar_width = 0.8 / num_bins
+    x = np.arange(num_cores)
 
-for i in range(num_bins):
-    plt.bar(x + i*bar_width, counts_matrix[:, i], width=bar_width, label=labels[i])
+    plt.figure(figsize=(15, 6))
 
-plt.xlabel("CPU Core")
-plt.ylabel("Number of samples")
-plt.title("CPU Core Frequency Distribution by Bins")
-plt.xticks(x + bar_width * (num_bins-1)/2, freq_columns, rotation=90)
-plt.legend(title="Frequency Range")
-plt.tight_layout()
-plt.savefig('/home/isabel/catkin_ws/histograms/each_core_frequency_histogram.png', dpi=300, bbox_inches='tight')
-plt.show()
+    for i in range(num_bins):
+        plt.bar(x + i * bar_width, counts_matrix[:, i], width=bar_width, label=LABELS[i])
+
+    plt.xlabel("CPU Core")
+    plt.ylabel("Number of samples")
+    plt.title("CPU Core Frequency Distribution by Bins")
+    plt.xticks(x + bar_width * (num_bins - 1) / 2, freq_columns, rotation=90)
+    plt.legend(title="Frequency Range")
+    plt.tight_layout()
+
+    out_path = os.path.join(output_dir, filename)
+    plt.savefig(out_path, dpi=300, bbox_inches='tight')
+    print(f"Wrote {out_path}")
+    if show:
+        plt.show()
+    plt.close()
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('csv_path',
+                        help="Path to a system_metrics_<timestamp>.csv produced by the profiler")
+    parser.add_argument('-o', '--output_dir', default=None,
+                        help="Directory to write the PNG into (default: this script's directory)")
+    parser.add_argument('--max_freq', type=float, default=4000,
+                        help="Max CPU frequency in MHz used to normalize to a percentage (default: 4000)")
+    parser.add_argument('--show', action='store_true',
+                        help="Display the plot interactively in addition to saving it")
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+    output_dir = args.output_dir or os.path.dirname(os.path.abspath(__file__))
+    os.makedirs(output_dir, exist_ok=True)
+
+    df = pd.read_csv(args.csv_path)
+    plot_each_core_frequency(df, output_dir, args.max_freq, args.show)
+
+
+if __name__ == '__main__':
+    main()
