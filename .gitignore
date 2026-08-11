@@ -2,8 +2,11 @@ __pycache__/
 
 CLAUDE.md
 
+# Profiling output
 *.png
 
 *.csv
 
-.mpl_cache/
+system_metrics_*.json
+
+logs/

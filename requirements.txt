@@ -1,0 +1,10 @@
+# Required
+psutil
+pandas
+matplotlib
+numpy
+
+# Optional: enables the CPU power and temperature columns by reading
+# LibreHardwareMonitor over WMI. Without it those two metrics are left empty;
+# everything else is collected normally. Pulls in pywin32.
+# wmi

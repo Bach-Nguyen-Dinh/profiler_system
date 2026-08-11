@@ -1,170 +1,135 @@
-import os
+"""Profile a Python script on Windows.
 
-# Pin matplotlib's cache to a persistent, writable dir *before* importing
-# anything that imports matplotlib (plotting). When the profiler runs under
-# sudo, root's default matplotlib cache falls back to a temp dir under /tmp,
-# which systemd empties on every reboot (`D /tmp` in tmpfiles.d) — forcing a
-# ~25s font-cache rebuild on the first run after each boot. Anchoring the
-# cache next to this script makes that rebuild a one-time cost.
-os.environ.setdefault(
-    "MPLCONFIGDIR",
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), ".mpl_cache"),
-)
+Runs the target as a subprocess while a background thread samples system-wide
+metrics, then charts the CSV and files everything into a timestamped folder.
 
-import system_metrics as system_metrics
-import plotting
-import code_dependencies_analyser
-import re
-import shutil
-import sys
-import importlib.util
+    python analyzer.py <target_script.py> [options] -- [target args]
+    python analyzer.py diagnose
+"""
 import argparse
+import os
 import subprocess
+import sys
 from datetime import datetime
+
+from profiler import SystemMetricsLogger, organize_logs, plot_system_metrics
+
+REQUIRED_PACKAGES = ["psutil", "pandas", "matplotlib", "numpy"]
+
 
 def _log_step(message):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}")
 
-# Organize logs into timestamped folders
-def organize_logs(base_dir="."):
-    logs_dir = os.path.join(base_dir, "logs")
-    os.makedirs(logs_dir, exist_ok=True)
 
-    # Regex to capture timestamps like _20250910_122351
-    pattern = re.compile(r"_(\d{8}_\d{6})\.(png|csv)$")
+def _require_windows():
+    if os.name != "nt":
+        sys.exit(
+            "This branch (dev_windows) is the Windows-only build of the profiler.\n"
+            "On Linux, use the `dev` branch, which reads metrics from sysfs.")
 
-    grouped_files = {}
 
-    # Find matching files
-    for fname in os.listdir(base_dir):
-        match = pattern.search(fname)
-        if match:
-            timestamp = match.group(1)
-            grouped_files.setdefault(timestamp, []).append(fname)
+def _check_packages():
+    import importlib.util
 
-    # Move files into timestamped folders
-    for timestamp, files in grouped_files.items():
-        target_dir = os.path.join(logs_dir, timestamp)
-        os.makedirs(target_dir, exist_ok=True)
+    missing = [p for p in REQUIRED_PACKAGES if importlib.util.find_spec(p) is None]
+    if missing:
+        sys.exit(f"Missing required packages: {', '.join(missing)}\n"
+                 f"Install them with: pip install {' '.join(missing)}")
 
-        for f in files:
-            src = os.path.join(base_dir, f)
-            dst = os.path.join(target_dir, f)
-            shutil.move(src, dst)
 
-    print(f"\nOrganized logs into {logs_dir}/{timestamp}/")
+def analyze_workflow(main_program, program_args=None, metrics_interval_ms=500,
+                     output_dir=None, csv_write_interval_s=5):
+    program_args = list(program_args or [])
+    # argparse leaves the "--" separator in place; the target should not see it.
+    if program_args and program_args[0] == "--":
+        program_args = program_args[1:]
 
-# Dynamically load a .py file
-def load_module_from_path(path):
-    spec = importlib.util.spec_from_file_location("user_module", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    if not os.path.isfile(main_program):
+        sys.exit(f"Target script not found: {main_program}")
 
-# take in the main function to analyze its dependencies
-def analyze_workflow(main_program, program_args=None, metrics_interval_ms=500, output_dir=None, csv_write_interval_s=5):
-    if program_args is None:
-        program_args = []
-
-    current_file = os.path.basename(main_program)
-
-    script_dir = os.path.dirname(os.path.abspath(main_program))
     if output_dir is None:
-        output_dir = script_dir
+        output_dir = os.path.dirname(os.path.abspath(main_program))
+    os.makedirs(output_dir, exist_ok=True)
 
     _log_step(f"Starting workflow for {main_program}")
-
-    # Analyze dependencies
-    # _log_step("Analyzing code dependencies...")
-    # code_dependencies_analyser.analyse_dependencies(script_dir, 'py', current_file)
-    # _log_step("Dependency analysis complete")
-
-    # Start metrics logging
     _log_step("Starting metrics logging...")
-    logger = system_metrics.SystemMetricsLogger()
+    logger = SystemMetricsLogger()
     logger.start(metrics_interval_ms, output_dir, csv_write_interval_s)
-    _log_step("Metrics logging started")
 
     try:
-        # Run the main program as a subprocess
-        # Remove stray '--' at the beginning of program_args (if any)
-        if len(program_args) > 0 and program_args[0] == "--":
-            program_args = program_args[1:]
-        cmd = ["python3", main_program] + program_args
-
-        _log_step(f"Running: {' '.join(cmd)}")
+        # sys.executable, never "python3": that name does not exist on a default
+        # Windows install, and this way the target inherits our virtualenv.
+        cmd = [sys.executable, os.path.abspath(main_program)] + program_args
+        _log_step(f"Running: {subprocess.list2cmdline(cmd)}")
         subprocess.run(cmd, check=True)
         _log_step("Target program finished")
     except KeyboardInterrupt:
-        pass
-    except subprocess.CalledProcessError as e:
-        print(f"Error running {main_program}: {e}")
+        _log_step("Interrupted; keeping metrics collected so far")
+    except subprocess.CalledProcessError as exc:
+        print(f"Target exited with status {exc.returncode}")
     finally:
-        # Stop logging
+        # Always land the output, even after a crash or Ctrl+C.
         _log_step("Stopping metrics logging...")
         out_file = logger.stop()
-        _log_step("Metrics logging stopped")
 
-        # Plot the system metrics from the generated CSV file
         _log_step("Plotting system metrics...")
-        plotting.plot_system_metrics(input_filename=out_file, output_dir=output_dir)
-        _log_step("Plotting complete")
+        try:
+            plot_system_metrics(input_filename=out_file, output_dir=output_dir)
+        except Exception as exc:
+            print(f"[Warning] plotting failed: {exc}")
 
-        # Organize logs into timestamped folders
         _log_step("Organizing logs...")
         organize_logs(output_dir)
         _log_step("Workflow complete")
 
 
-def setup_cpu_power_metrics():
-    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "setup_rapl_permissions.sh")
-    if not os.path.exists(script):
-        print("Error: setup script not found.")
-        sys.exit(1)
-    if os.geteuid() != 0:
-        print("This command must be run with sudo:")
-        print("  sudo python3 profiler_system/analyzer.py allow_cpu_power_metric_capture")
-        sys.exit(1)
+def diagnose():
+    """Report which metric sources this machine can actually supply."""
+    from profiler import hardware
 
-    print("Setting up CPU power metric capture...")
-    result = subprocess.run(
-        ["bash", script],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-    )
-    if result.returncode == 0:
-        print("CPU power metric capture enabled. You can now run the profiler normally.")
-    else:
-        print("Setup failed. You may need to check that your CPU supports Intel RAPL.")
-    sys.exit(result.returncode)
+    print("Profiler capability check\n" + "=" * 40)
+    frequency = hardware.PerCoreFrequency()
+    monitor = hardware.HardwareMonitor()
+    topology = hardware.read_topology()
+    for line in hardware.describe(frequency, monitor, topology):
+        print(line)
+    frequency.close()
+
+    if not monitor.available:
+        print("\nTo record CPU power and temperature on Windows:")
+        print("  1. pip install wmi")
+        print("  2. Install LibreHardwareMonitor and launch it as Administrator")
+        print("  3. In its Options menu, enable 'Remote Web Server'/WMI reporting")
+        print("  Leave it running while you profile.")
+    sys.exit(0)
 
 
 def main():
-    if len(sys.argv) > 1 and sys.argv[1] == "allow_cpu_power_metric_capture":
-        setup_cpu_power_metrics()
+    _require_windows()
 
-    parser = argparse.ArgumentParser(description="Analyzer wrapper for Python programs.")
-    parser.add_argument("main_program", help="Path to the main Python script to analyze")
-    parser.add_argument("--metrics_interval_ms", type=int, default=500)
-    parser.add_argument("--output_dir", default=None)
-    parser.add_argument("--csv_write_interval_s", type=int, default=5)
+    if len(sys.argv) > 1 and sys.argv[1] == "diagnose":
+        diagnose()
 
-    # Everything after "--" goes to the main program
+    parser = argparse.ArgumentParser(
+        description="Profile a Python script while sampling system metrics.",
+        epilog="Everything after -- is forwarded to the target script.")
+    parser.add_argument("main_program", help="path to the Python script to profile")
+    parser.add_argument("--metrics_interval_ms", type=int, default=500,
+                        help="sampling interval in milliseconds (default 500)")
+    parser.add_argument("--output_dir", default=None,
+                        help="output directory (default: the target's directory)")
+    parser.add_argument("--csv_write_interval_s", type=int, default=5,
+                        help="how often to flush samples to the CSV (default 5)")
+
     args, program_args = parser.parse_known_args()
 
-    analyze_workflow(
-        args.main_program,
-        program_args,
-        args.metrics_interval_ms,
-        args.output_dir,
-        args.csv_write_interval_s
-    )
+    _check_packages()
+    analyze_workflow(args.main_program, program_args, args.metrics_interval_ms,
+                     args.output_dir, args.csv_write_interval_s)
+
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
         pass
-
-
-
