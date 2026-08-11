@@ -44,7 +44,7 @@ PLOTTING = os.path.join(SCRIPT_DIR, "plotting_power_compare.py")
 COMPARE_ROOT = SCRIPT_DIR
 
 # The turn-on script's filename really does contain a comma; the turn-off one a dot.
-TURN_ON_SCRIPT = os.path.join(SCRIPT_DIR, "turn_on_all_e_core,sh")
+TURN_ON_SCRIPT = os.path.join(SCRIPT_DIR, "turn_on_all_e_core.sh")
 TURN_OFF_SCRIPT = os.path.join(SCRIPT_DIR, "turn_off_all_e_core.sh")
 
 
