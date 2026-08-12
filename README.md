@@ -14,8 +14,9 @@ folder.
 
 **Double-click `Install-Profiler.cmd`.** That is the whole installation. It:
 
-1. finds your Python interpreter,
-2. `pip install`s everything in `requirements.txt`,
+1. finds your Python interpreter — and offers to install one if you have none,
+2. creates the profiler's own environment and `pip install`s `requirements.txt`
+   into it,
 3. installs a `profiler` command on your PATH,
 4. verifies the lot with `analyzer.py diagnose`.
 
@@ -26,6 +27,20 @@ metric — CPU, memory, per-core frequency, package power, temperature — is a
 Windows performance counter read through `ctypes`. There is nothing to keep
 running while you profile.
 
+**Nothing lands in your site-packages.** `psutil`, `pandas`, `matplotlib` and
+`numpy` go into a private virtual environment under the install folder, so the
+profiler cannot disturb versions your own projects depend on, and uninstalling
+is a folder delete. Your profiled scripts do **not** run in that environment —
+see [Which interpreter runs your script](#which-interpreter-runs-your-script).
+
+**If you have no Python at all**, the installer says so and offers to install it
+for you (per-user, via `winget`, still no Administrator rights) rather than just
+printing a link. It asks first, because a language runtime is a far bigger
+change to your machine than four pip packages — and `Uninstall-Profiler.cmd`
+will not remove it again. Answer `O` to get the download page instead, or `C` to
+stop. Scripted runs can pass `-InstallPython` or `-NoInstallPython` to skip the
+question; with neither, a non-interactive run stops with instructions.
+
 Prefer a real executable? `powershell -ExecutionPolicy Bypass -File .\build_installer.ps1`
 compiles the same script into `dist\ProfilerSetup.exe`. Put it next to
 `analyzer.py` and double-click that instead.
@@ -35,29 +50,36 @@ Options, if you need them:
 | | |
 |---|---|
 | `Install-Profiler.cmd -InstallDir D:\tools\profiler` | install somewhere other than `%LOCALAPPDATA%\Programs\profiler` |
+| `Install-Profiler.cmd -InstallPython` | install Python too if it is missing, without asking |
+| `Install-Profiler.cmd -NoInstallPython` | never install Python; stop with instructions instead |
+| `Install-Profiler.cmd -NoVenv` | install the packages into your Python instead of a private environment |
 
-**Requirements:** Windows 10 or 11, Python 3.8+, and an internet connection at
-install time (for pip only).
+**Requirements:** Windows 10 or 11, and an internet connection at install time.
+Python 3.8+ — the installer offers to get it if you have none.
 
 ## Uninstall
 
-**Double-click `Uninstall-Profiler.cmd`.** It deletes the `profiler` command,
-takes its folder back off your user PATH, and clears the leftovers of older
-revisions (the LibreHardwareMonitor copy and the `ProfilerHardwareMonitor`
-logon task, neither of which the current build creates). No Administrator
-rights, same as the install.
+**Double-click `Uninstall-Profiler.cmd`.** It deletes the `profiler` command and
+its private environment, takes the install folder back off your user PATH, and
+clears the leftovers of older revisions (the LibreHardwareMonitor copy and the
+`ProfilerHardwareMonitor` logon task, neither of which the current build
+creates). No Administrator rights, same as the install.
 
 It leaves alone, on purpose:
 
 - **this repo** — the uninstaller lives in it; delete the folder yourself,
 - **your profiling output** — `logs\`, CSVs, PNGs and JSON sidecars are data,
   not installation,
-- **the Python packages** — `psutil`, `pandas`, `matplotlib` and `numpy` are
-  general-purpose libraries your other projects are likely using.
+- **Python itself**, including one installed by the installer's offer — it is a
+  general-purpose runtime, and by now other things may be using it,
+- **Python packages outside the private environment** — `psutil`, `pandas`,
+  `matplotlib` and `numpy` in *your* Python are general-purpose libraries your
+  other projects are likely using. The profiler's own copies live in the
+  environment above and go with it.
 
 | | |
 |---|---|
-| `Uninstall-Profiler.cmd -RemovePackages` | pip-uninstall those four as well (plus the legacy `wmi`) |
+| `Uninstall-Profiler.cmd -RemovePackages` | pip-uninstall those four from your own Python as well (plus the legacy `wmi`) — only relevant after a `-NoVenv` install, or one made by a revision predating the private environment |
 | `Uninstall-Profiler.cmd -InstallDir D:\tools\profiler` | match a non-default install location |
 | `Uninstall-Profiler.cmd -Force` | skip the confirmation prompt |
 
@@ -78,6 +100,7 @@ python analyzer.py <target_script.py> [profiler options] -- [target script args]
 | `--metrics_interval_ms` | 500 | sampling interval in milliseconds |
 | `--output_dir` | the target script's directory | where output is written |
 | `--csv_write_interval_s` | 5 | how often buffered samples are flushed to the CSV |
+| `--python` | the `python` on your PATH, or the current one | interpreter to run the target script with |
 
 The `--` separator is required before any arguments meant for the target script.
 
@@ -126,8 +149,33 @@ profiler <target_script.py> [profiler options] -- [target script args]
 profiler diagnose
 ```
 
-The shim hard-codes both the repo path and the interpreter found at install
-time. Re-run the installer if you move the repo or switch virtualenv.
+The shim hard-codes both the repo path and the profiler's own interpreter.
+Re-run the installer if you move the repo.
+
+## Which interpreter runs your script
+
+The profiler and the script it profiles are **two processes, and they do not
+have to share an interpreter.** They deliberately do not, once the profiler has
+its own environment: that environment contains `psutil`, `pandas`, `matplotlib`
+and `numpy` and nothing else, so running your script in it would hide your
+script's own dependencies and report the result as your bug.
+
+The target interpreter is picked per run:
+
+1. `--python <path>` if you pass one — `profiler --python .\.venv\Scripts\python.exe train.py`,
+2. otherwise the `python` on your **PATH**, whenever the profiler is running
+   from its private environment. An activated virtualenv puts itself first on
+   PATH, so `profiler train.py` inside your project's venv runs `train.py` in
+   that venv without being told to,
+3. otherwise the current interpreter. `python analyzer.py train.py` therefore
+   behaves exactly as you would expect: profiler and target share whatever
+   interpreter you invoked.
+
+Both are recorded in the run's JSON sidecar as `profiler_python` and
+`target_python`, and the target's is echoed in the `Running:` line at the start
+of the run. Neither a bad `--python` nor a missing PATH interpreter is silent:
+the first stops the run before any sampling starts, the second prints a note
+saying the target will share the profiler's environment.
 
 ## Output
 
@@ -271,9 +319,15 @@ Two implementation details worth knowing if you touch `profiler/hardware.py`:
 ### 4. `python3` does not exist
 
 A default Windows install provides `python`, plus a Microsoft Store alias stub
-that hijacks the name when real Python is not installed. The profiler launches
-the target with `sys.executable`, so the target always inherits the same
-interpreter and virtualenv as the profiler.
+that hijacks the name when real Python is not installed. Nothing here ever
+launches a bare `python3`; the target is always started from a resolved
+interpreter path.
+
+Resolving is what rejects the Store stub, in both the installer and
+`analyzer.py`: ask the candidate to print `sys.executable`. A real interpreter
+answers, the stub opens the Store and produces nothing — so a shim can never end
+up pointing at it, and neither can a profiled run. Which interpreter the target
+gets is [its own question](#which-interpreter-runs-your-script).
 
 ### 5. No `os.geteuid`, no `sudo`, no POSIX file modes
 
@@ -349,7 +403,9 @@ Two more notes on how they are wired in:
   source that was never available is not counted as a mid-run gap.
 - Each run's sidecar records exactly what was sampled: `power_source` and
   `power_domains` (which RAPL instances were summed), `temperature_source`,
-  `temperature_zones`, `temperature_available` and `temperature_static`.
+  `temperature_zones`, `temperature_available` and `temperature_static` — plus
+  `profiler_python` and `target_python`, so a CSV always says which interpreter
+  produced the load it measured.
 
 ## P-cores vs E-cores
 
@@ -377,9 +433,9 @@ profiler/
   logs.py               filing output into logs/<timestamp>/
 dummy_workload.py       four-phase smoke-test workload
 Install-Profiler.cmd    double-click entry point for the installer
-install.ps1             the installer itself: dependencies and the shim
+install.ps1             the installer itself: Python, environment, shim
 Uninstall-Profiler.cmd  double-click entry point for the uninstaller
-uninstall.ps1           removes the shim, the PATH entry and legacy leftovers
+uninstall.ps1           removes the shim, the environment, the PATH entry
 build_installer.ps1     compiles install.ps1 into dist\ProfilerSetup.exe
 ```
 
