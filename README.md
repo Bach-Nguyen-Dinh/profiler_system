@@ -10,16 +10,34 @@ folder.
 > tries to be cross-platform — running this one on Linux exits with a message
 > pointing at `dev`.
 
-## Requirements
+## Install
 
-- Windows 10 or 11
-- Python 3.8+
-- `pip install -r requirements.txt` (psutil, pandas, matplotlib, numpy)
-- Optional, for power and temperature: `pip install wmi` plus
-  [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor)
-  running as Administrator — see [CPU power and temperature](#cpu-power-and-temperature)
+**Double-click `Install-Profiler.cmd`.** That is the whole installation. It:
 
-No Administrator rights are needed for anything else.
+1. finds your Python interpreter,
+2. `pip install`s everything in `requirements.txt`,
+3. installs a `profiler` command on your PATH,
+4. verifies the lot with `analyzer.py diagnose`.
+
+Open a new terminal when it finishes, and `profiler <script.py>` works.
+
+**No Administrator rights, no background service, no kernel driver.** Every
+metric — CPU, memory, per-core frequency, package power, temperature — is a
+Windows performance counter read through `ctypes`. There is nothing to keep
+running while you profile.
+
+Prefer a real executable? `powershell -ExecutionPolicy Bypass -File .\build_installer.ps1`
+compiles the same script into `dist\ProfilerSetup.exe`. Put it next to
+`analyzer.py` and double-click that instead.
+
+Options, if you need them:
+
+| | |
+|---|---|
+| `Install-Profiler.cmd -InstallDir D:\tools\profiler` | install somewhere other than `%LOCALAPPDATA%\Programs\profiler` |
+
+**Requirements:** Windows 10 or 11, Python 3.8+, and an internet connection at
+install time (for pip only).
 
 ## Usage
 
@@ -53,9 +71,17 @@ python analyzer.py diagnose
 Profiler capability check
 ========================================
   per-core frequency : PDH performance counters (base clock 2803 MHz)
-  power, temperature : UNAVAILABLE - the `wmi` package is not installed (pip install wmi)
+  CPU power          : PDH Energy Meter (RAPL): RAPL_Package0_PKG
+  CPU temperature    : ACPI thermal zone: \_TZ.TZ00
+                       (firmware-reported zone, not the on-die sensor)
   topology           : non-hybrid CPU (4 physical cores, 8 logical processors)
+
+All required metric sources are available.
 ```
+
+It exits non-zero only if **CPU power** is missing, the one metric a run cannot
+go ahead without, so it doubles as the installer's own verification step. A
+missing temperature is reported but does not fail the check.
 
 **Smoke test** — four phases (idle / CPU burn / memory growth / mixed), so every
 chart shows clearly different regions:
@@ -64,15 +90,10 @@ chart shows clearly different regions:
 python analyzer.py dummy_workload.py -- --seconds 5 --workers 4
 ```
 
-## Installing the `profiler` command
+## The `profiler` command
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\install.ps1
-```
-
-This writes a `profiler.cmd` shim to `%LOCALAPPDATA%\Programs\profiler` and adds
-that folder to your **user** PATH — no Administrator rights required. Open a new
-terminal afterwards, then:
+The installer writes a `profiler.cmd` shim to `%LOCALAPPDATA%\Programs\profiler`
+and adds that folder to your **user** PATH. In a new terminal:
 
 ```powershell
 profiler <target_script.py> [profiler options] -- [target script args]
@@ -80,7 +101,7 @@ profiler diagnose
 ```
 
 The shim hard-codes both the repo path and the interpreter found at install
-time. Re-run `install.ps1` if you move the repo or switch virtualenv.
+time. Re-run the installer if you move the repo or switch virtualenv.
 
 ## Output
 
@@ -109,25 +130,96 @@ the Linux branch, so existing analysis scripts keep working.
 
 A metric the machine cannot supply is written as an **empty cell**, never as
 zero — an empty cell means "not measured", which is not the same as 0 watts.
+`cpu_power` should never be empty: it is required, so a run whose source is
+missing aborts before the target starts rather than producing that CSV at all.
+`cpu_temperature` may legitimately be empty for a whole run — see
+[CPU power and temperature](#cpu-power-and-temperature). The column is always
+present either way, so the schema never changes shape.
 
 ## Catches when running on Windows
 
 Everything below is a real difference from the Linux build, not a hypothetical.
 
-### 1. There is no user-mode power counter
+### 1. You cannot read the RAPL MSRs — but you do not have to
 
 Linux reads CPU energy from `/sys/class/powercap/intel-rapl:0/energy_uj`. The
 same RAPL registers exist on Windows silicon but live behind MSRs that only a
-signed kernel driver can read. **Administrator rights alone do not expose them** —
-there is no file to grant permission on, so the Linux
+signed kernel driver can read. **Administrator rights alone do not expose
+them** — there is no file to grant permission on, so the Linux
 `allow_cpu_power_metric_capture` / udev setup has no Windows equivalent. That
 command does not exist on this branch; `diagnose` replaces it.
+
+The way round it is that something in the kernel is *already* reading them.
+The platform power-engine driver (`intelpep`, inbox on Intel platforms)
+republishes the RAPL domains as instances of the PDH `Energy Meter` counter
+object:
+
+```
+\Energy Meter(RAPL_Package0_PKG)\Power      whole package  <- what we sample
+\Energy Meter(RAPL_Package0_PP0)\Power      cores
+\Energy Meter(RAPL_Package0_PP1)\Power      integrated graphics
+\Energy Meter(RAPL_Package0_DRAM)\Power     memory
+```
+
+`Power` is already a rate, in **milliwatts**. Reading it is the Windows
+equivalent of opening `energy_uj`, and it needs no third-party program, no
+driver of ours and no elevation. It is also *cheaper* than the Linux path:
+`dev` sleeps 100 ms inside `get_cpu_power()` to difference an energy counter,
+which puts a floor under its sampling rate. Here the driver has already
+differentiated, so a sample is one counter read and `--metrics_interval_ms` has
+no such floor.
+
+Two things to know if you touch the selection logic in `EnergyMeter._select`:
+
+- **The domains nest.** PP0 (cores) and PP1 (graphics) sit *inside* PKG, so
+  summing every instance bills the same watts twice. The code takes the `_PKG`
+  instances — one per socket, matching what `intel-rapl:0` reports on Linux —
+  and only falls back to the sub-domains when no package instance exists. DRAM
+  is never included: that is memory power, not CPU power.
+- **`_Total` is not the total.** The rollup instance reads a flat `0.0` on the
+  machines checked, and would double-count for the reason above anyway.
+
+Not every machine has this. A VM, an AMD platform with no energy-metering
+driver, or a machine with its chipset drivers stripped out has no `Energy
+Meter` object at all, and there genuinely is no user-mode substitute. `diagnose`
+tells you which case you are in.
+
+Note the neighbouring `Power Meter` counter object is a *different* thing (an
+EMI-backed whole-system meter, mostly on Surface-class hardware) and is usually
+present-but-empty: adding the counter succeeds and it has no instances. That is
+why `hardware.py` decides availability by sampling rather than by whether the
+counter opened.
 
 ### 2. `psutil` has no temperature support on Windows
 
 `psutil.sensors_temperatures()` is Linux/FreeBSD-only — the attribute is simply
 absent here, so code that calls it raises `AttributeError` rather than returning
 empty.
+
+Temperature is the metric Windows serves worst, and unlike power there is no
+trick that recovers it. The CPU's on-die sensor sits behind the same MSRs as
+RAPL, and **nothing in Windows republishes it**. What is left is the ACPI
+thermal zones the firmware declares, read from
+`\Thermal Zone Information(*)\High Precision Temperature` (tenths of a kelvin);
+the profiler takes the hottest zone each sample, since firmware does not label
+which zone tracks the CPU.
+
+That is a *platform* number, not a core temperature: coarse, slow, and on some
+machines a constant that never moves. The development machine is one of those —
+`\_TZ.TZ00` held 27.9 °C through a 20-second all-core burn that took package
+power from 9 W to 40 W. Because a flat line on auto-scaled axes still looks like
+a measurement, the profiler checks for it: if the zone's spread stays under
+0.5 °C while CPU load swings more than 25 points, the run prints a warning, the
+sidecar records `"temperature_static": true`, and the temperature chart is
+captioned to say so on its face.
+
+And a machine may declare no usable zone at all — common on desktops, servers
+and VMs. That does **not** stop a run: temperature is best-effort, so the
+column is left empty and everything else is sampled normally.
+
+If you need real die temperatures on Windows, that requires a signed kernel
+driver — which is the one thing this build deliberately does not ask you to
+install.
 
 ### 3. `psutil.cpu_freq(percpu=True)` returns one entry, not one per core
 
@@ -198,19 +290,40 @@ persists, so the workaround — and its import-ordering constraint — is gone.
 
 ## CPU power and temperature
 
-These two columns need an external source. Both come from LibreHardwareMonitor
-over WMI:
+| | Source | Unit | Required? |
+|---|---|---|---|
+| `cpu_power` | `\Energy Meter(RAPL_Package0_PKG)\Power` | mW → W | **yes** — the real RAPL package counter, same domain Linux reads |
+| `cpu_temperature` | `\Thermal Zone Information(*)\High Precision Temperature` | dK → °C | no — firmware ACPI zone, **not** the on-die sensor |
 
-1. `pip install wmi` (pulls in pywin32)
-2. Install [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor)
-3. Launch it **as Administrator** — it loads a kernel driver to read the MSRs,
-   which is exactly the privileged step Python cannot do on its own
-4. Leave it running while you profile
+Nothing to install and nothing to run: both are Windows performance counters,
+read through `ctypes` in `profiler/hardware.py`. See
+[catch 1](#1-you-cannot-read-the-rapl-msrs--but-you-do-not-have-to) for why
+power works without a driver and [catch 2](#2-psutil-has-no-temperature-support-on-windows)
+for why temperature is the weak one. Verify either with `profiler diagnose`.
 
-The older OpenHardwareMonitor is accepted as a fallback. Verify with
-`python analyzer.py diagnose`; each run's JSON sidecar records which provider was
-used. Without this, the power and temperature charts render as an explicit
-"unavailable" panel rather than a misleading flat line at zero.
+**Power is required.** If it is missing the profiler prints what to do and
+exits — it does not run the target and hand back a CSV with an empty power
+column. That mirrors the Linux build, where an unreadable RAPL counter is fatal
+rather than degraded.
+
+**Temperature is not.** A machine whose firmware declares no ACPI thermal zone
+has no CPU temperature to give *any* user-mode program, and there is nothing
+the user could install to change that — so refusing to profile it would only
+throw away a perfectly good power measurement. Such a run goes ahead, the
+`cpu_temperature` column is left empty (never zero-filled), the chart says so
+on its face, and `diagnose` reports it without failing. This is the one place
+`dev_windows` deliberately diverges from `dev`'s "both or nothing" rule, and it
+is a hardware fact, not a preference.
+
+Two more notes on how they are wired in:
+
+- Losing a source *mid-run* does not abort — the samples already taken are
+  worth keeping. Instead the run warns at the end, the sidecar records
+  `sensor_lost` and `sensor_gap_samples`, and the affected chart says so. A
+  source that was never available is not counted as a mid-run gap.
+- Each run's sidecar records exactly what was sampled: `power_source` and
+  `power_domains` (which RAPL instances were summed), `temperature_source`,
+  `temperature_zones`, `temperature_available` and `temperature_static`.
 
 ## P-cores vs E-cores
 
@@ -232,12 +345,14 @@ plotting code reads to label the charts.
 ```
 analyzer.py             CLI entry point and the whole control flow
 profiler/
-  hardware.py           PDH per-core frequency, CPU topology, LHM/OHM power & temperature
+  hardware.py           every PDH counter: frequency, RAPL power, thermal zone, topology
   metrics.py            SystemMetricsLogger — the sampling thread and CSV writer
   plotting.py           the six panels and the dashboard
   logs.py               filing output into logs/<timestamp>/
 dummy_workload.py       four-phase smoke-test workload
-install.ps1             installs the `profiler` command
+Install-Profiler.cmd    double-click entry point for the installer
+install.ps1             the installer itself: dependencies and the shim
+build_installer.ps1     compiles install.ps1 into dist\ProfilerSetup.exe
 ```
 
 The pipeline in `analyze_workflow`: start the sampler → run the target as a
