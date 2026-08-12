@@ -17,6 +17,7 @@ import atexit
 import csv
 import json
 import os
+import sys
 import threading
 import time
 from datetime import datetime
@@ -81,6 +82,10 @@ class SystemMetricsLogger:
         self._sensor_gaps = 0
         self._probe_error = None
         self._temperature_expected = False
+
+        # Set by analyzer.py before start(): the interpreter the profiled
+        # script runs under, which is not necessarily this one.
+        self.target_python = None
 
         self._frequency = None
         self._energy = None
@@ -322,6 +327,8 @@ class SystemMetricsLogger:
             return
         meta = {
             "platform": "Windows",
+            "profiler_python": sys.executable,
+            "target_python": self.target_python,
             "logical_processors": psutil.cpu_count(),
             "physical_cores": self._topology.get("physical_cores"),
             "hybrid_cpu": self._topology.get("hybrid", False),
