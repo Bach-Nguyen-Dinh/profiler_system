@@ -39,6 +39,32 @@ Options, if you need them:
 **Requirements:** Windows 10 or 11, Python 3.8+, and an internet connection at
 install time (for pip only).
 
+## Uninstall
+
+**Double-click `Uninstall-Profiler.cmd`.** It deletes the `profiler` command,
+takes its folder back off your user PATH, and clears the leftovers of older
+revisions (the LibreHardwareMonitor copy and the `ProfilerHardwareMonitor`
+logon task, neither of which the current build creates). No Administrator
+rights, same as the install.
+
+It leaves alone, on purpose:
+
+- **this repo** — the uninstaller lives in it; delete the folder yourself,
+- **your profiling output** — `logs\`, CSVs, PNGs and JSON sidecars are data,
+  not installation,
+- **the Python packages** — `psutil`, `pandas`, `matplotlib` and `numpy` are
+  general-purpose libraries your other projects are likely using.
+
+| | |
+|---|---|
+| `Uninstall-Profiler.cmd -RemovePackages` | pip-uninstall those four as well (plus the legacy `wmi`) |
+| `Uninstall-Profiler.cmd -InstallDir D:\tools\profiler` | match a non-default install location |
+| `Uninstall-Profiler.cmd -Force` | skip the confirmation prompt |
+
+Running it twice is harmless, and it never deletes the install folder itself
+unless removing the shim left it empty — a folder you chose yourself may hold
+other tools.
+
 ## Usage
 
 ```powershell
@@ -352,6 +378,8 @@ profiler/
 dummy_workload.py       four-phase smoke-test workload
 Install-Profiler.cmd    double-click entry point for the installer
 install.ps1             the installer itself: dependencies and the shim
+Uninstall-Profiler.cmd  double-click entry point for the uninstaller
+uninstall.ps1           removes the shim, the PATH entry and legacy leftovers
 build_installer.ps1     compiles install.ps1 into dist\ProfilerSetup.exe
 ```
 
