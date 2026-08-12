@@ -12,8 +12,12 @@ import subprocess
 import sys
 from datetime import datetime
 
-from profiler import SystemMetricsLogger, organize_logs, plot_system_metrics
+from profiler import (MetricsUnavailableError, SystemMetricsLogger,
+                      organize_logs, plot_system_metrics)
 
+# Power, temperature, frequency and topology all come from Windows itself
+# through ctypes, so nothing here is a sensor dependency -- these are only the
+# sampling and charting libraries.
 REQUIRED_PACKAGES = ["psutil", "pandas", "matplotlib", "numpy"]
 
 
@@ -34,7 +38,8 @@ def _check_packages():
     missing = [p for p in REQUIRED_PACKAGES if importlib.util.find_spec(p) is None]
     if missing:
         sys.exit(f"Missing required packages: {', '.join(missing)}\n"
-                 f"Install them with: pip install {' '.join(missing)}")
+                 f"Run Install-Profiler.cmd, or install them with:\n"
+                 f"  {sys.executable} -m pip install {' '.join(missing)}")
 
 
 def analyze_workflow(main_program, program_args=None, metrics_interval_ms=500,
@@ -54,7 +59,14 @@ def analyze_workflow(main_program, program_args=None, metrics_interval_ms=500,
     _log_step(f"Starting workflow for {main_program}")
     _log_step("Starting metrics logging...")
     logger = SystemMetricsLogger()
-    logger.start(metrics_interval_ms, output_dir, csv_write_interval_s)
+    try:
+        logger.start(metrics_interval_ms, output_dir, csv_write_interval_s)
+    except MetricsUnavailableError as exc:
+        # Only power gets here. Refuse to profile at all rather than run the
+        # whole workload and hand back a CSV with an empty power column.
+        from profiler import hardware
+
+        sys.exit(f"\nCannot start: {exc}\n\n{hardware.POWER_HELP}")
 
     try:
         # sys.executable, never "python3": that name does not exist on a default
@@ -84,23 +96,42 @@ def analyze_workflow(main_program, program_args=None, metrics_interval_ms=500,
 
 
 def diagnose():
-    """Report which metric sources this machine can actually supply."""
+    """Report which metric sources this machine can supply.
+
+    Exits non-zero only when CPU power is missing, the one metric a run cannot
+    go ahead without, so the installer can use this as its final verification
+    step. A missing temperature is printed but does not fail the check.
+    """
     from profiler import hardware
 
     print("Profiler capability check\n" + "=" * 40)
     frequency = hardware.PerCoreFrequency()
-    monitor = hardware.HardwareMonitor()
+    energy = hardware.EnergyMeter()
+    thermal = hardware.ThermalZone()
     topology = hardware.read_topology()
-    for line in hardware.describe(frequency, monitor, topology):
+    for line in hardware.describe(frequency, energy, thermal, topology):
         print(line)
-    frequency.close()
 
-    if not monitor.available:
-        print("\nTo record CPU power and temperature on Windows:")
-        print("  1. pip install wmi")
-        print("  2. Install LibreHardwareMonitor and launch it as Administrator")
-        print("  3. In its Options menu, enable 'Remote Web Server'/WMI reporting")
-        print("  Leave it running while you profile.")
+    # Read the verdicts before closing: `available` reflects a live handle.
+    power_ok, temperature_ok = energy.available, thermal.available
+    for source in (frequency, energy, thermal):
+        source.close()
+
+    if not power_ok:
+        print("\n" + hardware.POWER_HELP)
+        sys.exit(1)
+
+    # Missing temperature is reported but not fatal: a machine that declares no
+    # thermal zone still profiles, so this must not fail the installer's check.
+    if not temperature_ok:
+        print("\n" + hardware.TEMPERATURE_HELP)
+        print("\nCPU power is available; runs will go ahead without a temperature.")
+        sys.exit(0)
+
+    print("\nAll metric sources are available.")
+    print("Note: the temperature is a firmware-reported ACPI zone, not the CPU's\n"
+          "on-die sensor. Some machines report a constant there; a run that sees\n"
+          "one says so when it finishes.")
     sys.exit(0)
 
 

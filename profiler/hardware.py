@@ -5,23 +5,82 @@ build reads out of sysfs have no sysfs equivalent here:
 
     Linux                                   Windows
     ------------------------------------    ------------------------------------
-    /sys/class/powercap/.../energy_uj       no user-mode RAPL; needs a driver
+    /sys/class/powercap/.../energy_uj       PDH `\\Energy Meter(*)\\Power`
+    /sys/class/thermal, coretemp            PDH `\\Thermal Zone Information(*)`
     psutil.cpu_freq(percpu=True)            returns ONE entry, not one per core
     psutil.sensors_temperatures()           does not exist on Windows at all
     /sys/devices/system/cpu/ topology       GetLogicalProcessorInformationEx
 
-Per-core frequency is recovered from the PDH performance counter
-`\\Processor Information(*)\\% Processor Performance`, which is what Task
-Manager itself displays. That needs no third-party package and no elevation.
+All four live metrics come from PDH performance counters read through ctypes,
+so the profiler needs no third-party monitoring program, no kernel driver of
+its own, and no elevation.
 
-Power and temperature have no dependency-free source on Windows. Both are read
-from LibreHardwareMonitor (or the older OpenHardwareMonitor) over WMI when that
-tool is running; otherwise they are reported as unavailable rather than faked.
+Power is the interesting one. The RAPL MSRs themselves are unreachable from
+user mode -- that part of the Windows story is true and unchanged. But the
+platform power-engine driver (`intelpep` on Intel, an inbox Windows driver)
+already reads them in the kernel and republishes the same RAPL domains as PDH
+`Energy Meter` instances: `RAPL_Package0_PKG`, `_PP0` (cores), `_PP1`
+(graphics), `_DRAM`. Reading those is the Windows equivalent of opening
+`energy_uj`, and it costs nothing -- unlike the Linux build, there is no 100 ms
+sleep for an energy delta, because the driver has already differentiated for us
+and reports power directly, in milliwatts.
+
+Temperature is the metric Windows serves worst. The only user-mode source is
+the set of ACPI thermal zones the firmware chooses to declare, which is a
+platform-reported number, not the CPU's own on-die sensor: coarse, laggy, and
+on some machines a constant. Read `ThermalZone`'s notes before trusting it.
 """
 import ctypes
+import time
 from ctypes import wintypes
 
 import psutil
+
+# Two texts, because the two metrics are not equally obtainable and must not be
+# described as if they were. Missing power stops a run; missing temperature only
+# empties a column. Each is shared by the place that hits the problem during a
+# run and by `analyzer.py diagnose`, so the wording never drifts between them.
+POWER_HELP = """\
+CPU power is a required metric, and this machine cannot supply it.
+
+It is read from the Windows performance counter
+
+    \\Energy Meter(RAPL_Package0_PKG)\\Power
+
+which the platform power-engine driver -- `intelpep` on Intel -- publishes from
+the RAPL registers. Nothing to install, nothing to run as Administrator. Check
+that the driver is running:
+
+    Get-CimInstance Win32_SystemDriver -Filter "Name='intelpep'"
+
+It ships with Windows on Intel platforms. A virtual machine, an AMD platform
+with no energy-metering driver, or a machine with its chipset drivers stripped
+out may have no energy meter at all -- and there is no user-mode substitute,
+because the underlying RAPL registers are MSRs that only a signed kernel driver
+can read.
+
+The counters can also be disabled or corrupted in the registry. Rebuild them
+from an elevated prompt with:
+
+    lodctr /R
+
+Verify with:  profiler diagnose"""
+
+TEMPERATURE_HELP = """\
+CPU temperature is best-effort, and this machine cannot supply it. The run
+still goes ahead; the `cpu_temperature` column will be empty, and its chart
+will say why.
+
+It is read from
+
+    \\Thermal Zone Information(*)\\High Precision Temperature
+
+which reports the ACPI thermal zones the firmware declares. Firmware that
+declares none -- common on desktops, servers and virtual machines -- reports no
+temperature to any user-mode program, and there is nothing to install that
+would change that. The CPU's own on-die sensor sits behind the same MSRs as
+RAPL, and unlike RAPL nothing in Windows republishes it, so reading it needs a
+signed kernel driver."""
 
 # ---------------------------------------------------------------- PDH constants
 PDH_FMT_DOUBLE = 0x00000200
@@ -29,7 +88,16 @@ PDH_MORE_DATA = 0x800007D2
 PDH_CSTATUS_VALID_DATA = 0x00000000
 PDH_CSTATUS_NEW_DATA = 0x00000001
 
-_COUNTER_PATH = r"\Processor Information(*)\% Processor Performance"
+_FREQUENCY_COUNTER = r"\Processor Information(*)\% Processor Performance"
+_ENERGY_COUNTER = r"\Energy Meter(*)\Power"
+
+# Both thermal counters carry the same ACPI reading; the high-precision one is
+# in tenths of a kelvin, the plain one in whole kelvin. Try the finer one first
+# and keep the divisor that turns each into kelvin.
+_THERMAL_COUNTERS = [
+    (r"\Thermal Zone Information(*)\High Precision Temperature", 10.0),
+    (r"\Thermal Zone Information(*)\Temperature", 1.0),
+]
 
 
 class _PdhCounterValue(ctypes.Structure):
@@ -42,7 +110,15 @@ class _PdhCounterItem(ctypes.Structure):
     _fields_ = [("szName", wintypes.LPWSTR), ("FmtValue", _PdhCounterValue)]
 
 
+_pdh_library = None
+
+
 def _load_pdh():
+    """The pdh.dll binding, with argtypes/restypes applied once."""
+    global _pdh_library
+    if _pdh_library is not None:
+        return _pdh_library
+
     pdh = ctypes.WinDLL("pdh.dll")
     pdh.PdhOpenQueryW.argtypes = [wintypes.LPCWSTR, ctypes.c_size_t,
                                   ctypes.POINTER(wintypes.HANDLE)]
@@ -63,7 +139,113 @@ def _load_pdh():
     for name in ("PdhOpenQueryW", "PdhAddEnglishCounterW", "PdhCollectQueryData",
                  "PdhGetFormattedCounterArrayW", "PdhCloseQuery"):
         getattr(pdh, name).restype = wintypes.DWORD
+
+    _pdh_library = pdh
     return pdh
+
+
+class _PdhCounter:
+    """One wildcard PDH counter, sampled as {instance name: value}.
+
+    Shared by all three live metrics, which differ only in the counter path and
+    in what they make of the instance names.
+    """
+
+    def __init__(self, path):
+        self.path = path
+        self.error = None
+        self._pdh = None
+        self._query = None
+        self._counter = None
+        self._open()
+
+    def _open(self):
+        try:
+            self._pdh = _load_pdh()
+        except OSError as exc:
+            self.error = f"pdh.dll unavailable ({exc})"
+            return
+
+        query = wintypes.HANDLE()
+        if self._pdh.PdhOpenQueryW(None, 0, ctypes.byref(query)) != 0:
+            self.error = "PdhOpenQuery failed"
+            return
+
+        counter = wintypes.HANDLE()
+        # AddEnglishCounter, not AddCounter: counter names are localised, the
+        # English form is stable on every system language.
+        if self._pdh.PdhAddEnglishCounterW(query, self.path, 0,
+                                           ctypes.byref(counter)) != 0:
+            self._pdh.PdhCloseQuery(query)
+            self.error = f"counter not found: {self.path}"
+            return
+
+        self._query, self._counter = query, counter
+        # Rate counters need one priming collection; the first real read then
+        # has an interval to compute against.
+        self._pdh.PdhCollectQueryData(self._query)
+
+    @property
+    def opened(self):
+        return self._counter is not None
+
+    def read(self):
+        """Sample every instance. Returns {} when the counter has no data."""
+        if not self.opened:
+            return {}
+        if self._pdh.PdhCollectQueryData(self._query) != 0:
+            return {}
+
+        size = wintypes.DWORD(0)
+        count = wintypes.DWORD(0)
+        rc = self._pdh.PdhGetFormattedCounterArrayW(
+            self._counter, PDH_FMT_DOUBLE, ctypes.byref(size),
+            ctypes.byref(count), None)
+        if rc != PDH_MORE_DATA or size.value == 0:
+            return {}
+
+        buf = (ctypes.c_byte * size.value)()
+        rc = self._pdh.PdhGetFormattedCounterArrayW(
+            self._counter, PDH_FMT_DOUBLE, ctypes.byref(size),
+            ctypes.byref(count), buf)
+        if rc != 0:
+            return {}
+
+        items = ctypes.cast(buf, ctypes.POINTER(_PdhCounterItem))
+        values = {}
+        for i in range(count.value):
+            item = items[i]
+            if not item.szName:
+                continue
+            if item.FmtValue.CStatus not in (PDH_CSTATUS_VALID_DATA,
+                                             PDH_CSTATUS_NEW_DATA):
+                continue
+            values[item.szName] = item.FmtValue.doubleValue
+        return values
+
+    def probe(self, accept, timeout=2.0, interval=0.25):
+        """Sample until `accept` likes the result, then return it (else {}).
+
+        Adding a counter succeeds as soon as the *object* is registered, even
+        when it has no instances at all -- `\\Power Meter(*)` does exactly that
+        on machines with no power meter -- so "did it open" is not the same
+        question as "is there anything to read". Answering the second one has
+        to be done by sampling, because a rate counter reports nothing until
+        two collections are separated by an interval.
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            values = self.read()
+            if accept(values):
+                return values
+            if time.monotonic() >= deadline:
+                return {}
+            time.sleep(interval)
+
+    def close(self):
+        if self._query is not None and self._pdh is not None:
+            self._pdh.PdhCloseQuery(self._query)
+        self._query = self._counter = None
 
 
 # ------------------------------------------------------------ processor topology
@@ -176,198 +358,225 @@ class PerCoreFrequency:
     SOURCE = "PDH % Processor Performance"
 
     def __init__(self):
-        self._pdh = None
-        self._query = None
-        self._counter = None
         self.base_mhz = _base_clock_mhz()
         self.source = None
         self.error = None
+        self._counter = None
         self._open()
 
     def _open(self):
         if self.base_mhz is None:
             self.error = "could not determine the CPU base clock"
             return
-        try:
-            self._pdh = _load_pdh()
-        except OSError as exc:
-            self.error = f"pdh.dll unavailable ({exc})"
+        counter = _PdhCounter(_FREQUENCY_COUNTER)
+        if not counter.opened:
+            self.error = counter.error
             return
-
-        query = wintypes.HANDLE()
-        if self._pdh.PdhOpenQueryW(None, 0, ctypes.byref(query)) != 0:
-            self.error = "PdhOpenQuery failed"
-            return
-        counter = wintypes.HANDLE()
-        # AddEnglishCounter, not AddCounter: counter names are localised, the
-        # English form is stable on every system language.
-        if self._pdh.PdhAddEnglishCounterW(query, _COUNTER_PATH, 0,
-                                           ctypes.byref(counter)) != 0:
-            self._pdh.PdhCloseQuery(query)
-            self.error = "processor performance counter not found"
-            return
-
-        self._query, self._counter = query, counter
+        self._counter = counter
         self.source = self.SOURCE
-        # Rate counters need one priming collection; the first real read then
-        # has an interval to compute against.
-        self._pdh.PdhCollectQueryData(self._query)
 
     @property
     def available(self):
         return self._counter is not None
 
-    def _raw_items(self):
-        size = wintypes.DWORD(0)
-        count = wintypes.DWORD(0)
-        rc = self._pdh.PdhGetFormattedCounterArrayW(
-            self._counter, PDH_FMT_DOUBLE, ctypes.byref(size),
-            ctypes.byref(count), None)
-        if rc != PDH_MORE_DATA or size.value == 0:
-            return None
-        buf = (ctypes.c_byte * size.value)()
-        rc = self._pdh.PdhGetFormattedCounterArrayW(
-            self._counter, PDH_FMT_DOUBLE, ctypes.byref(size),
-            ctypes.byref(count), buf)
-        if rc != 0:
-            return None
-        items = ctypes.cast(buf, ctypes.POINTER(_PdhCounterItem))
-        return [(items[i].szName, items[i].FmtValue) for i in range(count.value)]
-
     def read(self):
         """Return {logical cpu index: MHz}, or {} when unavailable."""
         if not self.available:
             return {}
-        if self._pdh.PdhCollectQueryData(self._query) != 0:
-            return {}
-        items = self._raw_items()
-        if not items:
-            return {}
 
         # Instance names are "group,cpu" plus "_Total" / "0,_Total" rollups.
-        parsed = []
-        for name, value in items:
-            if not name or "_Total" in name:
-                continue
-            if value.CStatus not in (PDH_CSTATUS_VALID_DATA, PDH_CSTATUS_NEW_DATA):
+        mhz = {}
+        for name, percent in self._counter.read().items():
+            if "_Total" in name:
                 continue
             try:
                 group, cpu = name.split(",")
                 index = int(group) * 64 + int(cpu)
             except ValueError:
                 continue
-            parsed.append((index, value.doubleValue))
-
-        return {index: pct / 100.0 * self.base_mhz for index, pct in parsed}
+            mhz[index] = percent / 100.0 * self.base_mhz
+        return mhz
 
     def close(self):
-        if self._query is not None and self._pdh is not None:
-            self._pdh.PdhCloseQuery(self._query)
-        self._query = self._counter = None
+        if self._counter is not None:
+            self._counter.close()
+        self._counter = None
 
 
-# --------------------------------------------- power & temperature (LHM / OHM)
-_MONITOR_NAMESPACES = [
-    ("LibreHardwareMonitor", "root\\LibreHardwareMonitor"),
-    ("OpenHardwareMonitor", "root\\OpenHardwareMonitor"),
-]
+# ---------------------------------------------------------------------- power
+class EnergyMeter:
+    """CPU package power in watts, from the Windows Energy Meter counters.
 
-# Preference order when several sensors match; "CPU Package" is the whole-socket
-# figure closest to what Linux RAPL package energy reports.
-_POWER_PREFERENCE = ["cpu package", "package", "cpu cores"]
-_TEMP_PREFERENCE = ["cpu package", "core average", "core max", "cpu"]
-
-
-class HardwareMonitor:
-    """Optional power/temperature source backed by LibreHardwareMonitor's WMI.
-
-    Requires the `wmi` package (`pip install wmi`) and LibreHardwareMonitor
-    running elevated. When either is missing the profiler still records every
-    other metric and leaves these two columns empty.
+    The instances are the RAPL domains, republished by the kernel-side power
+    engine driver under names like `RAPL_Package0_PKG`. `Power` is already a
+    rate, in milliwatts, so a sample is a single counter read -- there is no
+    equivalent of the Linux build's 100 ms sleep to difference an energy
+    counter, and therefore no floor under `--metrics_interval_ms`.
     """
 
+    SOURCE = "PDH Energy Meter (RAPL)"
+
     def __init__(self):
-        self.provider = None
+        self.instances = []
+        self.source = None
         self.error = None
-        self._wmi = None
-        self._connect()
+        self.lost = False       # answered at start, then stopped reporting
+        self._counter = _PdhCounter(_ENERGY_COUNTER)
+        self._open()
 
-    def _connect(self):
-        # This runs on the sampling thread. Anything raising here would kill
-        # that thread and silently end the whole run, so nothing is allowed to
-        # escape -- a missing sensor source must only cost two CSV columns.
-        try:
-            import wmi
-        except ImportError:
-            self.error = "the `wmi` package is not installed (pip install wmi)"
+    @staticmethod
+    def _select(names):
+        """Which instances add up to CPU power, without double counting.
+
+        The RAPL domains nest: PP0 (cores) and PP1 (graphics) are *inside* PKG,
+        so summing every instance would bill the same watts twice. Take the
+        package total -- one per socket, which is what the Linux build's
+        `intel-rapl:0` reports -- and only fall back to the sub-domains when no
+        package instance exists. DRAM is deliberately never included: it is
+        memory power, not CPU power.
+
+        `_Total` is skipped as a source in its own right because the rollup
+        reads a flat 0.0 on the machines checked, and because it would sum the
+        nested domains for exactly the reason above.
+        """
+        usable = [n for n in names if n != "_Total"]
+        package = [n for n in usable if n.upper().endswith("_PKG")]
+        if package:
+            return sorted(package)
+        subdomains = [n for n in usable if n.upper().endswith(("_PP0", "_PP1"))]
+        if subdomains:
+            return sorted(subdomains)
+        # An unfamiliar meter with exactly one domain is unambiguous; anything
+        # else is guesswork, and guessing here would silently mislabel some
+        # other rail as CPU power.
+        non_dram = [n for n in usable if not n.upper().endswith("_DRAM")]
+        return non_dram if len(non_dram) == 1 else []
+
+    def _acceptable(self, values):
+        selected = self._select(values)
+        return bool(selected) and any(values[n] > 0 for n in selected)
+
+    def _open(self):
+        if not self._counter.opened:
+            self.error = ("no Energy Meter performance counter on this machine "
+                          "-- the platform has no energy-metering driver")
             return
-        except Exception as exc:
-            self.error = f"could not import the `wmi` package ({exc})"
+
+        values = self._counter.probe(self._acceptable)
+        if not values:
+            found = ", ".join(sorted(self._counter.read())) or "none"
+            self.error = ("the Energy Meter counter reports no usable CPU power "
+                          f"domain (instances found: {found})")
+            self._counter.close()
             return
 
-        try:
-            import pythoncom  # ships with pywin32, a dependency of `wmi`
-
-            # The sampling thread is not the thread that initialised COM, so it
-            # needs its own apartment before any WMI call.
-            pythoncom.CoInitialize()
-        except Exception:
-            pass
-
-        for label, namespace in _MONITOR_NAMESPACES:
-            try:
-                conn = wmi.WMI(namespace=namespace)
-                conn.Sensor()          # probe: raises if the namespace is absent
-            except Exception:
-                continue
-            self._wmi = conn
-            self.provider = label
-            return
-
-        self.error = ("no LibreHardwareMonitor/OpenHardwareMonitor WMI provider "
-                      "found (start it as Administrator)")
+        self.instances = self._select(values)
+        self.source = f"{self.SOURCE}: {' + '.join(self.instances)}"
 
     @property
     def available(self):
-        return self._wmi is not None
-
-    def _pick(self, sensor_type, preference):
-        """Best CPU sensor of `sensor_type`, by name preference then by value."""
-        try:
-            sensors = self._wmi.Sensor(SensorType=sensor_type)
-            # Keep only CPU sensors that are actually reporting a number.
-            cpu = [s for s in sensors
-                   if s.Identifier and "cpu" in s.Identifier.lower()
-                   and s.Value is not None]
-        except Exception as exc:
-            # Disable the provider rather than raising once per sample.
-            self.error = f"WMI query failed: {exc}"
-            self._wmi = None
-            return None
-
-        if not cpu:
-            return None
-        for match in (lambda name, wanted: name == wanted,
-                      lambda name, wanted: wanted in name):
-            for wanted in preference:
-                for s in cpu:
-                    if s.Name and match(s.Name.lower(), wanted):
-                        return float(s.Value)
-        return max(float(s.Value) for s in cpu)
+        return bool(self.instances)
 
     def cpu_power_watts(self):
         if not self.available:
             return None
-        return self._pick("Power", _POWER_PREFERENCE)
+        values = self._counter.read()
+        milliwatts = [values[name] for name in self.instances if name in values]
+        if not milliwatts:
+            # Keep sampling -- one dropped read is not worth ending a run over --
+            # but remember it, so the sidecar and the closing warning can say so.
+            self.lost = True
+            return None
+        return sum(milliwatts) / 1000.0
+
+    def close(self):
+        self._counter.close()
+
+
+# ---------------------------------------------------------------- temperature
+class ThermalZone:
+    """CPU temperature in °C, from the ACPI thermal zones.
+
+    This is the weakest metric on Windows and it is worth being blunt about
+    why. The Linux build reads the CPU's own on-die sensor (`coretemp`). There
+    is no user-mode equivalent here: the die sensor is behind the same MSRs as
+    RAPL, and unlike RAPL nothing in Windows republishes it. What is left is
+    whatever thermal zones the firmware declares in ACPI, which are a platform
+    number -- often a chassis or skin zone, updated slowly, quantised to whole
+    kelvin, and on some machines (the Tiger Lake all-in-one this was developed
+    on, for one) frozen at a constant that never moves under load.
+
+    So treat a reading as a floor, not as the core temperature, and check the
+    run's closing warning: `metrics.py` compares the temperature's spread
+    against the CPU load's and says so when the zone never moved.
+    """
+
+    SOURCE = "ACPI thermal zone"
+
+    def __init__(self):
+        self.zones = []
+        self.source = None
+        self.error = None
+        self.lost = False
+        self.scale = None
+        self._counter = None
+        self._open()
+
+    @staticmethod
+    def _celsius(values, scale):
+        """Zone readings converted to °C, keeping only the plausible ones."""
+        out = {}
+        for name, raw in values.items():
+            celsius = raw / scale - 273.15
+            if 0.0 < celsius < 150.0:
+                out[name] = celsius
+        return out
+
+    def _open(self):
+        for path, scale in _THERMAL_COUNTERS:
+            counter = _PdhCounter(path)
+            if not counter.opened:
+                continue
+            values = counter.probe(lambda v: bool(self._celsius(v, scale)))
+            zones = self._celsius(values, scale)
+            if zones:
+                self._counter, self.scale = counter, scale
+                self.zones = sorted(zones)
+                self.source = f"{self.SOURCE}: {', '.join(self.zones)}"
+                return
+            counter.close()
+
+        self.error = ("no ACPI thermal zone reports a plausible temperature "
+                      "-- this machine's firmware declares none")
+
+    @property
+    def available(self):
+        return self._counter is not None
 
     def cpu_temperature_c(self):
+        """Hottest zone of the moment.
+
+        Taken per sample rather than pinning one zone at startup: firmware that
+        declares several does not label which tracks the CPU, and the warmest
+        is the best available guess -- the same rule the Linux build's `topaz`
+        backend uses across `sensors` outputs.
+        """
         if not self.available:
             return None
-        return self._pick("Temperature", _TEMP_PREFERENCE)
+        zones = self._celsius(self._counter.read(), self.scale)
+        if not zones:
+            self.lost = True
+            return None
+        return max(zones.values())
+
+    def close(self):
+        if self._counter is not None:
+            self._counter.close()
+        self._counter = None
 
 
 # ----------------------------------------------------------------- description
-def describe(frequency, monitor, topology):
+def describe(frequency, energy, thermal, topology):
     """Human-readable capability summary, printed once when logging starts."""
     lines = []
     if frequency.available:
@@ -376,10 +585,19 @@ def describe(frequency, monitor, topology):
     else:
         lines.append(f"  per-core frequency : UNAVAILABLE - {frequency.error}")
 
-    if monitor.available:
-        lines.append(f"  power, temperature : {monitor.provider} via WMI")
+    if energy.available:
+        lines.append(f"  CPU power          : {energy.source}")
     else:
-        lines.append(f"  power, temperature : UNAVAILABLE - {monitor.error}")
+        lines.append(f"  CPU power          : UNAVAILABLE (required) - {energy.error}")
+
+    if thermal.available:
+        lines.append(f"  CPU temperature    : {thermal.source}")
+        lines.append("                       (firmware-reported zone, not the "
+                     "on-die sensor)")
+    else:
+        lines.append(f"  CPU temperature    : UNAVAILABLE (optional) - {thermal.error}")
+        lines.append("                       the run continues; the column "
+                     "will be empty")
 
     if topology["hybrid"]:
         p = sum(1 for v in topology["core_class"].values() if v == "P")

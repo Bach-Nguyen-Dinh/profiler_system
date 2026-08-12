@@ -1,10 +1,10 @@
-# Required
+# All of these are required. `Install-Profiler.cmd` installs them for you.
+#
+# Sampling and charting only. The hardware metrics -- per-core frequency,
+# package power and temperature -- have no package behind them: they are
+# Windows performance counters read through ctypes in profiler/hardware.py, so
+# there is nothing to install for them and nothing to run as Administrator.
 psutil
 pandas
 matplotlib
 numpy
-
-# Optional: enables the CPU power and temperature columns by reading
-# LibreHardwareMonitor over WMI. Without it those two metrics are left empty;
-# everything else is collected normally. Pulls in pywin32.
-# wmi

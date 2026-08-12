@@ -5,9 +5,16 @@ timestamp so they file together. Each panel is drawn by one function that is
 called twice -- once onto the dashboard grid, once onto its own figure -- so the
 two never drift apart.
 
-Metrics the machine could not measure (typically power and temperature, which
-need LibreHardwareMonitor on Windows) are drawn as an explicit "not available"
-panel instead of an empty set of axes.
+A metric with no samples is drawn as an explicit "not available" panel instead
+of an empty set of axes, and the panel says *which* kind of absence it is --
+a source this machine never had, or one that stopped reporting mid-run. For
+power the first case cannot happen: it is required, so the run aborts up front.
+For temperature it happens routinely, on any machine whose firmware declares no
+ACPI thermal zone.
+
+The temperature panel has a third state worth knowing about: a zone that
+reports a constant. That draws a normal-looking flat line, so when the run
+flagged it the panel is captioned to say the variation is not measured.
 """
 import json
 import os
@@ -122,10 +129,10 @@ def _panel_power(ax, ctx):
     df = ctx["df"]
     if not _has_data(df, "cpu_power"):
         _unavailable(ax, "CPU power consumption over time",
-                     "CPU power unavailable\n"
-                     "Windows exposes no user-mode RAPL counter.\n"
-                     "Run LibreHardwareMonitor as Administrator\n"
-                     "and pip install wmi to record it.")
+                     "no CPU power samples in this run\n"
+                     "Power is a required metric, so its source was\n"
+                     "present at start and stopped reporting since.\n"
+                     "Run `profiler diagnose` to see what this machine offers.")
         return
     ax.plot(df["RelativeTime"].values, df["cpu_power"].values, "r-",
             linewidth=2, label="CPU power")
@@ -135,19 +142,44 @@ def _panel_power(ax, ctx):
 
 
 def _panel_temperature(ax, ctx):
-    df = ctx["df"]
+    df, meta = ctx["df"], ctx["meta"]
     if not _has_data(df, "cpu_temperature"):
-        _unavailable(ax, "CPU temperature over time",
-                     "CPU temperature unavailable\n"
-                     "psutil has no sensors_temperatures() on Windows.\n"
-                     "Run LibreHardwareMonitor as Administrator\n"
-                     "and pip install wmi to record it.")
+        # Two different situations, and saying "sensor lost" for the first one
+        # would send the reader looking for a fault that is not there.
+        if meta.get("temperature_available") is False:
+            reason = ("no CPU temperature on this machine\n\n"
+                      "Its firmware declares no readable ACPI thermal zone,\n"
+                      "and Windows exposes no on-die CPU sensor to user mode.\n"
+                      "Nothing is wrong with the run: every other metric,\n"
+                      "power included, was sampled normally.")
+        else:
+            reason = ("no CPU temperature samples in this run\n\n"
+                      "The thermal zone answered at start and stopped\n"
+                      "reporting part-way through.\n"
+                      "Run `profiler diagnose` to see what this machine offers.")
+        _unavailable(ax, "CPU temperature over time", reason)
         return
     ax.plot(df["RelativeTime"].values, df["cpu_temperature"].values, "orange",
             linewidth=2, label="CPU temperature")
     ax.set_title("CPU temperature over time")
     ax.set_ylabel("Temperature (°C)")
     ax.legend()
+
+    if not ctx["meta"].get("temperature_static"):
+        return
+    # The run established that this zone never moved while load swung. A flat
+    # line drawn on auto-scaled axes looks like a measurement; say plainly that
+    # it is not, on the chart itself, because the PNG travels without the log.
+    value = df["cpu_temperature"].iloc[0]
+    ax.set_ylim(value - 10, value + 10)
+    ax.text(0.5, 0.88,
+            "This machine's ACPI thermal zone reports a constant.\n"
+            "The reading is real; the variation is not measured.\n"
+            "Windows exposes no on-die CPU sensor to user mode.",
+            transform=ax.transAxes, ha="center", va="top", fontsize=10,
+            color="#8a1c1c",
+            bbox={"boxstyle": "round", "facecolor": "#ffe9e9",
+                  "edgecolor": "#8a1c1c", "alpha": 0.95})
 
 
 def _panel_overall_cpu(ax, ctx):
@@ -217,6 +249,7 @@ def plot_system_metrics(input_filename, output_dir="."):
 
     ctx = {
         "df": df,
+        "meta": meta,
         "time_label": time_label,
         "nbins": nbins,
         "usage_columns": usage_columns,
