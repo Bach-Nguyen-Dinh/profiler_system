@@ -10,3 +10,6 @@ CLAUDE.md
 system_metrics_*.json
 
 logs/
+
+# Built installer executable (build_installer.ps1)
+dist/
