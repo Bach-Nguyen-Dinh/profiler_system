@@ -1,12 +1,14 @@
 @echo off
 rem Double-click this file to set the profiler up.
 rem
-rem It runs install.ps1 from the same folder: installs the Python
-rem dependencies, then installs the `profiler` command. No Administrator
-rem rights needed, and nothing is left running in the background.
+rem It runs install.ps1 from the same folder: builds the profiler its own
+rem Python environment, then installs the `profiler` command. If this machine
+rem has no Python at all, it asks whether to install one for you. No
+rem Administrator rights needed, and nothing is left running in the background.
 rem
 rem Any arguments are passed straight through, e.g.
 rem     Install-Profiler.cmd -InstallDir D:\tools\profiler
+rem     Install-Profiler.cmd -InstallPython
 
 setlocal
 cd /d "%~dp0"

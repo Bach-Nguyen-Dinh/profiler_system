@@ -7,11 +7,15 @@
 
       1. deletes the `profiler.cmd` shim, and the install folder if it is left
          empty,
-      2. takes the install folder back off the user PATH,
-      3. clears the leftovers of older revisions -- the LibreHardwareMonitor
+      2. deletes the profiler's own virtual environment, taking its copies of
+         psutil, pandas, matplotlib and numpy with it,
+      3. takes the install folder back off the user PATH,
+      4. clears the leftovers of older revisions -- the LibreHardwareMonitor
          copy and the elevated `ProfilerHardwareMonitor` logon task, neither of
          which the current build creates,
-      4. optionally pip-uninstalls the Python dependencies (-RemovePackages).
+      5. optionally pip-uninstalls the Python dependencies (-RemovePackages),
+         for installs that predate the private environment or were made with
+         -NoVenv.
 
     Like the installer, it needs no Administrator rights. The one exception is
     the legacy scheduled task: it was registered elevated, so deleting it can
@@ -22,9 +26,12 @@
       * the repo -- this script lives in it; delete the folder yourself,
       * profiling output (`logs\`, CSVs, PNGs, JSON sidecars) -- that is your
         data, not part of the installation,
-      * the Python dependencies, unless you pass -RemovePackages. psutil,
-        pandas, matplotlib and numpy are shared libraries that other projects
-        on this machine are likely to be using.
+      * Python itself, including one this machine only has because the
+        installer offered to install it: it is a general-purpose runtime, and
+        by now other things may depend on it,
+      * Python packages outside the profiler's own environment, unless you
+        pass -RemovePackages. psutil, pandas, matplotlib and numpy are shared
+        libraries that other projects on this machine are likely to be using.
 
 .EXAMPLE
     .\Uninstall-Profiler.cmd
@@ -65,7 +72,10 @@ function Invoke-Native {
     #>
     param([scriptblock]$Command, [switch]$ShowOutput)
     $ErrorActionPreference = 'Continue'
-    if ($ShowOutput) { & $Command } else { & $Command 2>&1 | Out-Null }
+    # Out-Host, not a bare call: anything the command writes to the success
+    # stream would otherwise become part of this function's output, and the
+    # caller would receive pip's entire log with the exit code appended.
+    if ($ShowOutput) { & $Command | Out-Host } else { & $Command 2>&1 | Out-Null }
     return $LASTEXITCODE
 }
 
@@ -78,12 +88,13 @@ Write-Info "Install folder: $InstallDir"
 
 if (-not $Force) {
     Write-Host ''
-    Write-Host 'This removes the `profiler` command and its PATH entry.'
+    Write-Host 'This removes the `profiler` command, its PATH entry and its private'
+    Write-Host 'Python environment.'
     if ($RemovePackages) {
-        Write-Warn 'It will ALSO pip-uninstall psutil, pandas, matplotlib and numpy,'
-        Write-Warn 'which other projects on this machine may depend on.'
+        Write-Warn 'It will ALSO pip-uninstall psutil, pandas, matplotlib and numpy'
+        Write-Warn 'from your own Python, which other projects may depend on.'
     }
-    Write-Host 'Your repo and any profiling output are left alone.'
+    Write-Host 'Your repo, your profiling output and Python itself are left alone.'
     $answer = Read-Host 'Continue? [y/N]'
     if ($answer -notmatch '^(y|yes)$') {
         Write-Host 'Nothing was changed.'
@@ -102,6 +113,22 @@ if (Test-Path $shim) {
     # Not a problem worth reporting: an uninstall run twice, or run on a
     # machine that was never set up, should finish quietly.
     Write-Info "No shim at $shim (already gone)."
+}
+
+# ---------------------------------------------------------------------- venv
+# Unlike the packages below, this one is not optional and needs no prompt: the
+# environment is profiler-private, created by the installer, and nothing else
+# on the machine can be importing from it.
+Write-Step "Removing the profiler's own environment"
+$venvDir = Join-Path $InstallDir 'venv'
+if (Test-Path $venvDir) {
+    $size = (Get-ChildItem -LiteralPath $venvDir -Recurse -File -ErrorAction SilentlyContinue |
+             Measure-Object -Property Length -Sum).Sum
+    Remove-Item -LiteralPath $venvDir -Recurse -Force
+    Write-Ok ("Deleted $venvDir ({0:N1} MB, including its psutil, pandas, matplotlib and numpy)" -f ($size / 1MB))
+    $removed += 'private virtual environment'
+} else {
+    Write-Info "No environment at $venvDir (installed with -NoVenv, or an older revision)."
 }
 
 # ------------------------------------------------------- legacy: monitor task
@@ -204,8 +231,11 @@ public static extern System.IntPtr SendMessageTimeout(System.IntPtr hWnd, uint M
 }
 
 # ------------------------------------------------------------------- packages
-Write-Step 'Python dependencies'
+Write-Step 'Python dependencies outside that environment'
 if ($RemovePackages) {
+    # Only reaches your own site-packages. A current install keeps its packages
+    # in the venv deleted above, so this finds nothing to do unless the profiler
+    # was installed with -NoVenv or by a revision that predates the venv.
     $python = $null
     foreach ($candidate in @('python', 'py')) {
         $cmd = Get-Command $candidate -ErrorAction SilentlyContinue
@@ -240,8 +270,9 @@ if ($RemovePackages) {
         Write-Info "Remove it yourself with:  $python -m pip uninstall -y pywin32"
     }
 } else {
-    Write-Info 'Left installed (psutil, pandas, matplotlib, numpy).'
-    Write-Info 'Pass -RemovePackages to uninstall them too.'
+    Write-Info 'Left alone. The profiler kept its own copies in the environment just'
+    Write-Info 'deleted; any psutil/pandas/matplotlib/numpy in your Python is yours.'
+    Write-Info 'Pass -RemovePackages to uninstall those too.'
 }
 
 # -------------------------------------------------------------------- summary
