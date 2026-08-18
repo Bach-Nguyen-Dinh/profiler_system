@@ -2,18 +2,37 @@
 
 A Python-based system profiling tool that monitors CPU, memory, temperature, and power consumption during program execution.
 
+## Setup
+
+This project manages its own virtual environment with [uv](https://docs.astral.sh/uv/). If you don't have uv yet:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Then, from the repo root:
+
+```bash
+uv sync
+```
+
+That creates `.venv/` with the exact dependency versions from `uv.lock`, downloading the pinned Python (3.11, see `.python-version`) if your system doesn't have it. You never need to activate the venv or run `pip install` — `uv run` picks it up automatically, and re-running `uv sync` after a `git pull` brings the environment back in step.
+
+> **Note:** The venv is for the **profiler itself**. Your target script keeps running under your own `python3` with its own dependencies — see [Which interpreter runs your script](#which-interpreter-runs-your-script).
+
 ## Usage
 
 Run the profiler by passing your target script as the first argument, followed by profiler options, then `--`, then any arguments for your target script:
 
 ```
-python3 profiler_system/analyzer.py <target_script.py> [profiler options] -- [target script args]
+uv run profiler_system/analyzer.py <target_script.py> [profiler options] -- [target script args]
 ```
 
 **Profiler options:**
 - `--metrics_interval_ms` — how often to sample metrics in milliseconds (default: 500)
 - `--output_dir` — where to write output files (default: target script's directory)
 - `--csv_write_interval_s` — how often to flush metrics to CSV in seconds (default: 5)
+- `--target_python` — interpreter used to run the target script (default: `python3` from your `PATH`)
 
 The `--` separator is required when passing arguments to the target script.
 
@@ -21,7 +40,7 @@ The `--` separator is required when passing arguments to the target script.
 
 <!-- The "--" separates profiler parameters from target program parameters -->
 ```bash
-python3 profiler_system/analyzer.py sar_colorization.py \
+uv run profiler_system/analyzer.py sar_colorization.py \
     --metrics_interval_ms 500 \
     --csv_write_interval_s 5 \
     -- \
@@ -31,6 +50,20 @@ python3 profiler_system/analyzer.py sar_colorization.py \
     --batch_size 16 \
     --img_size 256 \
     --checkpoint_interval 10
+```
+
+### Which interpreter runs your script
+
+The profiler's venv holds only what the profiler needs (`psutil`, `matplotlib`, `networkx`, `pyvis`, `pandas`, `numpy`). Your target script is launched as a separate subprocess under plain `python3` — resolved from your `PATH`, *not* from the profiler's venv — so it keeps whatever environment it was written against. Nothing needs to be added to this project to profile a script that depends on torch, GDAL, or anything else.
+
+This works because neither `uv run` nor the installed `profiler` wrapper activates the venv; they invoke `.venv/bin/python` directly, leaving `PATH` untouched.
+
+To profile a script that lives in its own virtual environment, point at that interpreter explicitly:
+
+```bash
+uv run profiler_system/analyzer.py ~/my_project/train.py \
+    --target_python ~/my_project/.venv/bin/python \
+    -- --epochs 10
 ```
 
 ## Enabling CPU Power Metrics
@@ -44,8 +77,10 @@ CPU power measurement requires a one-time permission setup. If you see a warning
 Run the following command once:
 
 ```bash
-sudo python3 profiler_system/analyzer.py allow_cpu_power_metric_capture
+sudo profiler_system/.venv/bin/python profiler_system/analyzer.py allow_cpu_power_metric_capture
 ```
+
+(Or simply `sudo profiler allow_cpu_power_metric_capture` if you've installed the wrapper below.) The venv interpreter is named explicitly here because `sudo uv run` would look for `uv` on root's `PATH`, where it usually isn't.
 
 After this, CPU power metrics will be collected automatically on all future runs without sudo. The setup persists across reboots.
 
@@ -60,10 +95,12 @@ sudo bash install.sh
 ```
 
 The script will:
-1. Check that all required Python packages are installed (`psutil`, `matplotlib`, `networkx`, `pyvis`, `pandas`) and list any that are missing.
-2. Create `/usr/local/bin/profiler` pointing to `analyzer.py` in this repo.
+1. Run `uv sync` to create or refresh `.venv/` from `uv.lock` (owned by your user, not root). If `uv` isn't installed, it stops and tells you how to get it.
+2. Create `/usr/local/bin/profiler`, a wrapper that execs `.venv/bin/python analyzer.py`.
 
-After installing, you can use `profiler` instead of `python3 profiler_system/analyzer.py`:
+Because the wrapper names the venv interpreter directly, it works from any directory and doesn't touch your `PATH` — so profiled target scripts still run under your own `python3`.
+
+After installing, you can use `profiler` instead of `uv run profiler_system/analyzer.py`:
 
 ```bash
 profiler <target_script.py> [profiler options] -- [target script args]
@@ -78,7 +115,29 @@ profiler /home/sarthak/workspace/SAR_codebase/cphd_aic.py --metrics_interval_ms 
 ```
   
 
-> **Note:** The wrapper hard-codes the path to this repo at install time, so keep the repo in the same location after installing. If you move it, re-run `sudo bash install.sh`.
+> **Note:** The wrapper hard-codes the paths to this repo and its `.venv` at install time, so keep the repo in the same location after installing. If you move it, re-run `sudo bash install.sh` (a moved venv also needs `uv sync` to rebuild it, which the install script does for you).
+
+### Uninstalling
+
+```bash
+sudo bash uninstall.sh
+```
+
+That removes `/usr/local/bin/profiler` and nothing else. It only deletes the wrapper if it actually points at this repo's `analyzer.py`, so a `profiler` command installed by something else is left alone (`--force` overrides that check).
+
+The two other things the profiler may have put on your machine are opt-in flags, because neither is removed by uninstalling the command:
+
+| Flag | Removes |
+|---|---|
+| `--venv` | this repo's `.venv/` — rebuild any time with `uv sync` |
+| `--rapl` | `/etc/udev/rules.d/99-rapl.rules`, undoing `allow_cpu_power_metric_capture`, and reloads udev |
+| `--all` | both of the above |
+
+```bash
+sudo bash uninstall.sh --all
+```
+
+> **Note:** `--rapl` stops the RAPL permissions from being reapplied on boot, but the currently-loaded permissions stay readable until you reboot.
 
 ## Histograms (`histograms/`)
 
@@ -87,7 +146,7 @@ The scripts in `histograms/` are standalone post-hoc analysis tools. They are no
 Every script takes the CSV as its first argument:
 
 ```bash
-python3 histograms/<script>.py <system_metrics_*.csv> [options]
+uv run histograms/<script>.py <system_metrics_*.csv> [options]
 ```
 
 **Options (all scripts):**
@@ -99,7 +158,7 @@ python3 histograms/<script>.py <system_metrics_*.csv> [options]
 **Example:**
 
 ```bash
-python3 histograms/cores_active_histogram.py \
+uv run histograms/cores_active_histogram.py \
     logs/20260115_154219/system_metrics_20260115_154219.csv \
     --output_dir ~/analysis/january_run \
     --max_freq 5200
@@ -118,7 +177,7 @@ python3 histograms/cores_active_histogram.py \
 Generate a subset by naming the plots you want:
 
 ```bash
-python3 histograms/p_core_histograms.py <csv> --plots freq_average active
+uv run histograms/p_core_histograms.py <csv> --plots freq_average active
 ```
 
 ### P-cores and E-cores
@@ -129,7 +188,7 @@ On a hybrid CPU, which `core_<N>_*` column belongs to which class is hardware-sp
 
 ```bash
 # defaults to 0-15, the i9-13900E layout; any id not listed counts as an E-core
-python3 histograms/cores_active_histogram.py <csv> --plots p_and_e --p_cores 0-7,16-23
+uv run histograms/cores_active_histogram.py <csv> --plots p_and_e --p_cores 0-7,16-23
 ```
 
 `--p_cores` accepts ranges (`0-15`), explicit ids (`0,1,2`), or a mix of both.

@@ -21,7 +21,7 @@ def _check_rapl_permission():
         print(
             "\n[Error] CPU power metrics unavailable: permission denied.\n"
             "  Run once to fix it, then re-run the profiler:\n"
-            "    sudo python3 profiler_system/analyzer.py allow_cpu_power_metric_capture\n"
+            "    sudo profiler allow_cpu_power_metric_capture\n"
         )
         sys.exit(1)
 

@@ -1,0 +1,16 @@
+[project]
+name = "profiler-system"
+version = "0.1.0"
+description = "System profiler that monitors CPU, memory, temperature, and power consumption during program execution."
+requires-python = ">=3.11"
+dependencies = [
+    "matplotlib>=3.8",
+    "networkx>=3.2",
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "psutil>=5.9",
+    "pyvis>=0.3.2",
+]
+
+# No [build-system]: this is a collection of scripts, not an installable
+# package, so uv manages the environment without trying to build the project.

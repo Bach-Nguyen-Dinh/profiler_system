@@ -62,7 +62,7 @@ def load_module_from_path(path):
     return module
 
 # take in the main function to analyze its dependencies
-def analyze_workflow(main_program, program_args=None, metrics_interval_ms=500, output_dir=None, csv_write_interval_s=5):
+def analyze_workflow(main_program, program_args=None, metrics_interval_ms=500, output_dir=None, csv_write_interval_s=5, target_python="python3"):
     if program_args is None:
         program_args = []
 
@@ -90,7 +90,12 @@ def analyze_workflow(main_program, program_args=None, metrics_interval_ms=500, o
         # Remove stray '--' at the beginning of program_args (if any)
         if len(program_args) > 0 and program_args[0] == "--":
             program_args = program_args[1:]
-        cmd = ["python3", main_program] + program_args
+        # The target runs under its *own* interpreter, not the profiler's venv,
+        # so it keeps whatever dependencies it was written against. The
+        # `profiler` wrapper calls the venv python directly instead of
+        # activating the venv, so PATH is untouched and "python3" here still
+        # resolves to the user's normal interpreter.
+        cmd = [target_python, main_program] + program_args
 
         _log_step(f"Running: {' '.join(cmd)}")
         subprocess.run(cmd, check=True)
@@ -123,7 +128,9 @@ def setup_cpu_power_metrics():
         sys.exit(1)
     if os.geteuid() != 0:
         print("This command must be run with sudo:")
-        print("  sudo python3 profiler_system/analyzer.py allow_cpu_power_metric_capture")
+        print("  sudo profiler allow_cpu_power_metric_capture")
+        print("  # or, without installing the wrapper:")
+        print("  sudo profiler_system/.venv/bin/python profiler_system/analyzer.py allow_cpu_power_metric_capture")
         sys.exit(1)
 
     print("Setting up CPU power metric capture...")
@@ -148,6 +155,11 @@ def main():
     parser.add_argument("--metrics_interval_ms", type=int, default=500)
     parser.add_argument("--output_dir", default=None)
     parser.add_argument("--csv_write_interval_s", type=int, default=5)
+    parser.add_argument(
+        "--target_python",
+        default="python3",
+        help="Interpreter used to run the target script (default: python3 from PATH)",
+    )
 
     # Everything after "--" goes to the main program
     args, program_args = parser.parse_known_args()
@@ -157,7 +169,8 @@ def main():
         program_args,
         args.metrics_interval_ms,
         args.output_dir,
-        args.csv_write_interval_s
+        args.csv_write_interval_s,
+        args.target_python
     )
 
 if __name__ == "__main__":

@@ -7,3 +7,5 @@ CLAUDE.md
 *.csv
 
 .mpl_cache/
+
+.venv/
