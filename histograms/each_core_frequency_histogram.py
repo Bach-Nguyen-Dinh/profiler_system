@@ -10,10 +10,16 @@ import os
 
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
 import numpy as np
 
 BINS = [0, 60, 70, 80, 90, 100]
 LABELS = ['<60%', '60-70%', '70-80%', '80-90%', '>90%']
+
+
+def integer_ticks(axis):
+    """Counts are whole numbers -- keep the tick marks off values like 2.5."""
+    axis.set_major_locator(MaxNLocator(integer=True))
 
 
 def plot_each_core_frequency(df, output_dir, max_freq, show, filename='each_core_frequency_histogram.png'):
@@ -43,6 +49,7 @@ def plot_each_core_frequency(df, output_dir, max_freq, show, filename='each_core
 
     plt.xlabel("CPU Core")
     plt.ylabel("Number of samples")
+    integer_ticks(plt.gca().yaxis)
     plt.title("CPU Core Frequency Distribution by Bins")
     plt.xticks(x + bar_width * (num_bins - 1) / 2, freq_columns, rotation=90)
     plt.legend(title="Frequency Range")

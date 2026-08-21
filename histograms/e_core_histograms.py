@@ -18,6 +18,7 @@ import os
 
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
 import numpy as np
 
 FREQ_BINS = [0, 60, 70, 80, 90, 100]
@@ -30,6 +31,11 @@ def frequency_columns(df):
 
 def core_usage_columns(df):
     return [col for col in df.columns if col.startswith('core_') and col.endswith('_usage')]
+
+
+def integer_ticks(axis):
+    """Counts are whole numbers -- keep the tick marks off values like 2.5."""
+    axis.set_major_locator(MaxNLocator(integer=True))
 
 
 #################################################################################################################################
@@ -55,6 +61,7 @@ def plot_frequency_count(df, opts):
     plt.bar(FREQ_LABELS, counts, color='skyblue', edgecolor='black')
     plt.xlabel("Frequency Range (% of max frequency)")
     plt.ylabel("Number of Core Frequency Counts")
+    integer_ticks(plt.gca().yaxis)
     plt.title("Histogram of CPU Core Frequencies")
     plt.grid(axis='y', linestyle='--', alpha=0.7)
     save(opts, 'e_core_frequency_count_histogram.png')
@@ -83,6 +90,7 @@ def plot_frequency_average(df, opts):
     plt.bar(FREQ_LABELS, counts, color='skyblue', edgecolor='black')
     plt.xlabel("Average Core Frequency (% of max)")
     plt.ylabel("Number of CPU Cores")
+    integer_ticks(plt.gca().yaxis)
     plt.title("CPU Cores by Average Frequency")
     plt.grid(axis='y', linestyle='--', alpha=0.7)
     plt.tight_layout()
@@ -112,6 +120,7 @@ def plot_average_usage(df, opts):
     plt.title("Number of Cores Per Usage Range")
     plt.xlabel("CPU Usage Range (%)")
     plt.ylabel("Number of CPU Cores")
+    integer_ticks(plt.gca().yaxis)
     plt.grid(axis='y', linestyle='--', alpha=0.7)
     plt.tight_layout()
     save(opts, 'e_cores_active_average_usage_histogram.png')
@@ -139,6 +148,7 @@ def plot_active_time(df, opts):
     plt.bar(labels, counts, color='skyblue', edgecolor='black')
     plt.xlabel("Percentage of Time Core is Active")
     plt.ylabel("Number of CPU Cores")
+    integer_ticks(plt.gca().yaxis)
     plt.title("Number of Cores Per Active-Time Range")
     plt.grid(axis='y', linestyle='--', alpha=0.7)
     plt.tight_layout()
@@ -183,6 +193,7 @@ def plot_p_and_e_usage(df, opts):
     plt.xticks(x, labels)
     plt.xlabel("Average CPU Core Usage (%)")
     plt.ylabel("Number of Cores")
+    integer_ticks(plt.gca().yaxis)
     plt.title("Core Usage Distribution (P-cores vs E-cores)")
     plt.grid(axis='y', linestyle='--', alpha=0.7)
     plt.legend()
@@ -220,6 +231,7 @@ def plot_each_core_frequency(df, opts):
 
     plt.xlabel("CPU Core")
     plt.ylabel("Number of samples")
+    integer_ticks(plt.gca().yaxis)
     plt.title("CPU Core Frequency Distribution by Bins")
     plt.xticks(x + bar_width * (num_bins - 1) / 2, freq_columns, rotation=90)
     plt.legend(title="Frequency Range")

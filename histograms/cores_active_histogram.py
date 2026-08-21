@@ -15,12 +15,18 @@ import os
 
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
 import numpy as np
 
 
 def core_usage_columns(df):
     """Per-core usage columns, by the `core_<N>_usage` naming convention."""
     return [col for col in df.columns if col.startswith('core_') and col.endswith('_usage')]
+
+
+def integer_ticks(axis):
+    """Counts are whole numbers -- keep the tick marks off values like 2.5."""
+    axis.set_major_locator(MaxNLocator(integer=True))
 
 
 #################################################################################################################################
@@ -46,6 +52,7 @@ def plot_average_usage(df, output_dir, p_cores, show):
     plt.title("Number of Cores Per Usage Range")
     plt.xlabel("CPU Usage Range (%)")
     plt.ylabel("Number of CPU Cores")
+    integer_ticks(plt.gca().yaxis)
     plt.grid(axis='y', linestyle='--', alpha=0.7)
     plt.tight_layout()
     save(output_dir, 'cores_active_average_usage_histogram.png', show)
@@ -73,6 +80,7 @@ def plot_active_time(df, output_dir, p_cores, show):
     plt.bar(labels, counts, color='skyblue', edgecolor='black')
     plt.xlabel("Percentage of Time Core is Active")
     plt.ylabel("Number of CPU Cores")
+    integer_ticks(plt.gca().yaxis)
     plt.title("Number of Cores Per Active-Time Range")
     plt.grid(axis='y', linestyle='--', alpha=0.7)
     plt.tight_layout()
@@ -117,6 +125,7 @@ def plot_p_and_e_usage(df, output_dir, p_cores, show):
     plt.xticks(x, labels)
     plt.xlabel("Average CPU Core Usage (%)")
     plt.ylabel("Number of Cores")
+    integer_ticks(plt.gca().yaxis)
     plt.title("Core Usage Distribution (P-cores vs E-cores)")
     plt.grid(axis='y', linestyle='--', alpha=0.7)
     plt.legend()

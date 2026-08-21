@@ -11,6 +11,7 @@ import os
 
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
 import numpy as np
 
 # Frequency bins, shared by both plots
@@ -21,6 +22,11 @@ LABELS = ['<60%', '60-70%', '70-80%', '80-90%', '>90%']
 def load_frequency_columns(df):
     """Per-core frequency columns, by the `core_<N>_frequency` naming convention."""
     return [col for col in df.columns if col.endswith('_frequency')]
+
+
+def integer_ticks(axis):
+    """Counts are whole numbers -- keep the tick marks off values like 2.5."""
+    axis.set_major_locator(MaxNLocator(integer=True))
 
 
 #################################################################################################################################
@@ -46,6 +52,7 @@ def plot_frequency_count(df, output_dir, max_freq, show):
     plt.bar(LABELS, counts, color='skyblue', edgecolor='black')
     plt.xlabel("Frequency Range (% of max frequency)")
     plt.ylabel("Number of Core Frequency Counts")
+    integer_ticks(plt.gca().yaxis)
     plt.title("Histogram of CPU Core Frequencies")
     plt.grid(axis='y', linestyle='--', alpha=0.7)
     save(output_dir, 'core_frequency_count_histogram.png', show)
@@ -74,6 +81,7 @@ def plot_frequency_average(df, output_dir, max_freq, show):
     plt.bar(LABELS, counts, color='skyblue', edgecolor='black')
     plt.xlabel("Average Core Frequency (% of max)")
     plt.ylabel("Number of CPU Cores")
+    integer_ticks(plt.gca().yaxis)
     plt.title("CPU Cores by Average Frequency")
     plt.grid(axis='y', linestyle='--', alpha=0.7)
     plt.tight_layout()
