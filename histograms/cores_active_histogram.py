@@ -170,7 +170,8 @@ def parse_args():
     parser.add_argument('csv_path',
                         help="Path to a system_metrics_<timestamp>.csv produced by the profiler")
     parser.add_argument('-o', '--output_dir', default=None,
-                        help="Directory to write the PNGs into (default: this script's directory)")
+                        help="Directory to write the PNGs into, under a histogram/ subfolder of it "
+                             "(default: the directory the input CSV is in)")
     parser.add_argument('--plots', nargs='+', choices=sorted(PLOTS), default=sorted(PLOTS),
                         help="Which histograms to generate (default: all)")
     parser.add_argument('--p_cores', default='0-15',
@@ -183,7 +184,11 @@ def parse_args():
 
 def main():
     args = parse_args()
-    output_dir = args.output_dir or os.path.dirname(os.path.abspath(__file__))
+    # The graphs go into a histogram/ subfolder of the output directory --
+    # by default the run's own directory, next to the CSV they came from --
+    # so they sit apart from the profiler's own PNGs and CSV.
+    output_dir = os.path.join(
+        args.output_dir or os.path.dirname(os.path.abspath(args.csv_path)), 'histogram')
     os.makedirs(output_dir, exist_ok=True)
 
     p_cores = parse_core_list(args.p_cores)
