@@ -150,21 +150,23 @@ uv run histograms/<script>.py <system_metrics_*.csv> [options]
 ```
 
 **Options (all scripts):**
-- `-o`, `--output_dir` — where to write the PNGs (default: the script's own directory, i.e. `histograms/`)
-- `--max_freq` — max CPU frequency in MHz, used to normalize frequencies to a percentage (default: 4000)
-- `--plots` — which histograms to generate (default: all; see the table below)
+- `-o`, `--output_dir` — where to write the PNGs; they land in a `histogram/` subfolder of it (default: the directory the input CSV is in, i.e. the run's own `logs/<timestamp>/histogram/`)
 - `--show` — display each plot interactively as well as saving it. Without this, plots are only written to disk.
+
+Everything else is per script: `--plots` picks which histograms to generate (all but the two single-plot scripts take it — see the table below), `--max_freq` normalizes frequencies to a percentage, and the utilisation scripts take their own band and core-selection options — see [Utilisation scripts](#utilisation-scripts).
 
 **Example:**
 
 ```bash
-uv run histograms/cores_active_histogram.py \
+uv run histograms/core_frequency_histogram.py \
     logs/20260115_154219/system_metrics_20260115_154219.csv \
     --output_dir ~/analysis/january_run \
     --max_freq 5200
 ```
 
 **Available scripts:**
+
+*Frequency, and cores reduced to one number each:*
 
 | Script | `--plots` values | What it shows |
 |---|---|---|
@@ -174,10 +176,53 @@ uv run histograms/cores_active_histogram.py \
 | `p_core_histograms.py` | `freq_count`, `freq_average`, `freq_each_core`, `average`, `active`, `p_and_e` | All six of the above for a P-cores-only run; PNGs are prefixed `p_core*` |
 | `e_core_histograms.py` | same as above | The same set for an E-cores-only run; PNGs are prefixed `e_core*` |
 
+*Utilisation, keeping every sample:*
+
+| Script | `--plots` values | What it shows |
+|---|---|---|
+| `core_usage_histogram.py` | `grouped`, `stacked`, `cores`, `active`, `p_and_e` | The whole utilisation picture in one script: per-core distributions (`grouped`, `stacked`) alongside the core-count summaries (`cores`, `active`, `p_and_e`) |
+| `each_core_usage_histogram.py` | `grouped`, `stacked` | Just the per-core distributions — the `grouped`/`stacked` half of the above, on its own |
+| `pooled_core_usage_histogram.py` | *(single plot)* | Every core reading from every sample thrown into one pool and binned — the overall shape of the load |
+
 Generate a subset by naming the plots you want:
 
 ```bash
 uv run histograms/p_core_histograms.py <csv> --plots freq_average active
+```
+
+### Utilisation scripts
+
+`cores_active_histogram.py --plots average` averages each core down to a single number and then bins those numbers, so its entire output is a handful of bars saying how many cores were busy on average. That hides the shape of the load: a core sitting at a steady 50% and a core alternating between idle and pegged have the same mean, and are indistinguishable there.
+
+The three utilisation scripts keep every sample instead. `core_usage_histogram.py` is the one to reach for — it covers both views, and the other two are narrower cuts of the same data:
+
+- **`grouped` / `stacked`** — one distribution per core. `grouped` draws a bar per band per core (y = sample count); `stacked` draws one full-height bar per core, segmented by the share of the run spent in each band, with the core's summary stat annotated above it.
+- **`cores` / `active` / `p_and_e`** — the fleet-level counts, as in `cores_active_histogram.py`.
+- **`pooled_core_usage_histogram.py`** — one histogram of all `core_<N>_usage` readings pooled together (n = cores × samples), so the distribution has a usable shape even on a short run. A bimodal result — a pile near 0% and a spike at 100% — means the work is arriving as a few pegged threads rather than spreading across the cores.
+
+**Extra options:**
+
+| Option | Scripts | Meaning |
+|---|---|---|
+| `--bins` | `core_usage`, `each_core_usage` | Comma-separated band edges (default: `0,10,25,50,75,90,100` — deliberately uneven, since the interesting structure is at the idle and saturated ends) |
+| `--stat mean\|median` | `core_usage` | How to reduce a core to one number for the `cores`, `p_and_e` and stacked-annotation charts (default: `mean`) |
+| `--cores` | all three | Restrict to these core ids, e.g. `0-15` or `0,1,2` (default: every core in the CSV) |
+| `--cores-per-row` | `core_usage`, `each_core_usage` | Cores per row of the `grouped`/`stacked` charts; the rest spill onto further rows (default: 8) |
+| `--bin_width` | `pooled_core_usage` | Bin width in utilisation percent (default: 5) |
+| `--split_saturated` | `pooled_core_usage` | Give the clipped 100% readings their own bar instead of folding them into the top bin |
+| `--p_cores` | `core_usage` | P-core ids for the `p_and_e` plot — see [P-cores and E-cores](#p-cores-and-e-cores) |
+
+A mean is dragged upward by a handful of saturated samples, so a core that idles through most of a run but spikes hard is reported as busy on average; the median says what the core was doing for most of the run. Comparing the two is the cheapest way to spot cores whose load is spiky rather than steady — the outputs are named after the stat, so neither run overwrites the other:
+
+```bash
+uv run histograms/core_usage_histogram.py <csv> --plots cores stacked --stat mean
+uv run histograms/core_usage_histogram.py <csv> --plots cores stacked --stat median
+```
+
+On a hybrid CPU, pooling P-cores and E-cores separately is usually more informative than pooling them together:
+
+```bash
+uv run histograms/pooled_core_usage_histogram.py <csv> --cores 0-15 --split_saturated
 ```
 
 ### P-cores and E-cores
